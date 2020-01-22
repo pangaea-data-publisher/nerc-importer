@@ -11,6 +11,7 @@ import pandas.io.sql as psql
 import logging
 from sqlalchemy import create_engine
 import datetime
+import sql_itis
 
 def initLog():
     # create logger 
@@ -80,19 +81,9 @@ def xml_parser(root_main):
     
     return df       
    
-    
-def get_database():
-    try:
-        engine = get_connection_from_profile()
-        logger.info("Connected to PostgreSQL database!")
-    except IOError:
-        logger.exception("Failed to get database connection!")
-        return None, 'fail'
 
-    return engine
-
-
-def get_connection_from_profile(config_file_name="import.ini"):
+# functions for creation of DB connection   -START    
+def get_init_params(config_file_name="import.ini"):
     """
     Sets up database connection from config file.
     Input:
@@ -104,19 +95,19 @@ def get_connection_from_profile(config_file_name="import.ini"):
     configfile=config_file_name
     configfile_path=os.path.abspath(configfile)
     configParser.read(configfile_path)
+    init_dict=dict()
     # READING INI FILE
-    pangaea_db_user=configParser.get('DB','pangaea_db_user')
-    pangaea_db_pwd=configParser.get('DB','pangaea_db_pwd')
-    pangaea_db_db=configParser.get('DB','pangaea_db_db')
-    pangaea_db_host=configParser.get('DB','pangaea_db_host')
-    pangaea_db_port=configParser.get('DB','pangaea_db_port')
+    init_dict['user']=configParser.get('DB','pangaea_db_user')
+    init_dict['pwd']=configParser.get('DB','pangaea_db_pwd')
+#    pangaea_db_db=configParser.get('DB','pangaea_db_db')
+    init_dict['db']=configParser.get('DB','pangaea_db_db_test')
+    init_dict['host']=configParser.get('DB','pangaea_db_host')
+    init_dict['port']=configParser.get('DB','pangaea_db_port')
 
-    return get_engine(pangaea_db_db,  pangaea_db_user,
-                      pangaea_db_host, pangaea_db_port,
-                      pangaea_db_pwd)
+    return init_dict
     
 
-def get_engine(db, user, host, port, passwd):
+def get_engine(init_dict):
     """
     Get SQLalchemy engine using credentials.
     Input:
@@ -128,16 +119,32 @@ def get_engine(db, user, host, port, passwd):
     """
 
     url = 'postgresql://{user}:{passwd}@{host}:{port}/{db}'.format(
-        user=user, passwd=passwd, host=host, port=port, db=db)
+        user=init_dict['user'], passwd=init_dict['pwd'], host=init_dict['host'], 
+        port=init_dict['port'], db=init_dict['db'])
     engine = create_engine(url, pool_size = 50)
     
     return engine
 
 
-def dataframe_from_database(sql_command,con):
-    
+def create_db_connection():
+    try:
+        init_dict= get_init_params(config_file_name="import.ini")  # gets initial paramters from import.ini file
+        engine=get_engine(init_dict)   # gets engine using initial DB parameters 
+        con = engine.raw_connection() 
+        logger.info("Connected to PostgreSQL database!")
+    except IOError:
+        logger.exception("Failed to get database connection!")
+        return None, 'fail'
+
+    return con
+# functions for creation of DB connection   -END
+
+
+def dataframe_from_database(sql_command):
+    con=create_db_connection()
     df=pd.read_sql(sql_command,con)
-    
+    if con is not None:
+            con.close()
     return df
 
 
@@ -175,10 +182,11 @@ def dataframe_difference(df1,df2):
 
 
 # create dataframe to be inserted (from harvested values and default values)
-def insert_df_shaper(df,cursor):
+def insert_df_shaper(df):
     
     # Chechk the last id_term in SQL db
-    
+    con=create_db_connection()
+    cursor=con.cursor()
     cursor.execute('SELECT MAX(id_term) FROM public.term')
     max_id_term=int(cursor.fetchall()[0][0])
     # assign deafult values to columns
@@ -197,31 +205,37 @@ def insert_df_shaper(df,cursor):
        'datetime_updated', 'description', 'master', 'root', 'semantic_uri',
        'uri', 'id_term_category', 'id_term_status', 'id_terminology',
        'id_user_created', 'id_user_updated', 'datetime_last_harvest']]
-    df.set_index('id_term', inplace=True)
+#    df.set_index('id_term', inplace=True)
+    if con is not None:
+            con.close()
     return df
 
 
-def update(df_update):
-    for i in list(df_update.index):
-        row=dict(df_update.loc[i]) # create a dictionary from every row of DataFrame
-        sql_command="""
-            UPDATE public.term
-            SET 
-            datetime_last_harvest='{datetime_last_harvest}',
-            description='{description}',
-            id_term_status={id_term_status},
-            name='{name}',
-            uri='{uri}'
-            WHERE semantic_uri='{semantic_uri}'
-            """.format(datetime_last_harvest=row['datetime_last_harvest'],
-            description=row['description'],
-            id_term_status=row['id_term_status'],
-            name=row['name'],
-            uri=row['uri'],
-            semantic_uri=row['semantic_uri'])
-        cursor.execute(sql_command)
-        con.commit()                          # should we commit on EVERY iteration?
-    con.close                                     # should we "close' on every iteration?
+
+
+def batch_insert_new_terms(table,df):
+    try:
+        conn_pg=create_db_connection()
+        conn_pg.autocommit = False
+        list_of_tuples = [tuple(x) for x in df.values]
+        df_columns = list(df)      # names of columns 
+        columns = ",".join(df_columns)
+        # create VALUES('%s', '%s",...) one '%s' per column
+        values = "VALUES({})".format(",".join(["%s" for _ in df_columns]))
+        # create INSERT INTO table (columns) VALUES('%s',...)
+        insert_stmt = "INSERT INTO {} ({}) {}".format(table, columns, values)
+        cur = conn_pg.cursor()
+        psycopg2.extras.execute_batch(cur, insert_stmt, list_of_tuples)
+        logger.debug("batch_insert_new_terms - record inserted successfully ")
+        # Commit your changes
+        conn_pg.commit()
+    except psycopg2.DatabaseError as error:
+        logger.debug('Failed to insert records to database rollback: %s' % (error))
+        conn_pg.rollback()
+    finally:
+        if conn_pg is not None:
+            cur.close()
+            conn_pg.close()
 
 
 
@@ -244,20 +258,20 @@ if __name__=='__main__':
     
     df1=xml_parser(root_main)
     
-    # accessing DB
-    engine = get_database()
-    con = engine.raw_connection()  # or con=engine.connect() ????
-    cursor=con.cursor()
-    
     # reading the 'term' table from  pangaea_db database
     sql_command='SELECT * FROM public.term \
         WHERE id_terminology=21'
-    df2=dataframe_from_database(sql_command,con)
+    df2=dataframe_from_database(sql_command)
  
     df_insert,df_update=dataframe_difference(df1,df2)        #df_insert/df_update.shape=(n,7)!//df_insert,df_update can be None if df1 or df2 are empty
-    # execute INSERT statement
-    df_insert_shaped=insert_df_shaper(df_insert,cursor)         # df_ins.shape=(n,17) ready to insert into SQL DB 
-    df_insert_shaped.to_sql('term', con = engine, if_exists = 'append', chunksize = 1000) # append if table already exists
+    # add default columns to the table (prepare to be inserted into PANGAEA DB)
+    df_insert_shaped=insert_df_shaper(df_insert)         # df_ins.shape=(n,17) ready to insert into SQL DB 
+      # execute INSERT statement
+    batch_insert_new_terms(table='term',df=df_insert_shaped)
+    
+    
+    
+   
     
     # execute UPDATE statement
-    update(df_update)
+    
