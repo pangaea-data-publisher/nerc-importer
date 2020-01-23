@@ -11,7 +11,6 @@ import pandas.io.sql as psql
 import logging
 from sqlalchemy import create_engine
 import datetime
-import sql_itis
 
 def initLog():
     # create logger 
@@ -156,11 +155,14 @@ def dataframe_difference(df1,df2):
     retutns df_insert,df_update:
     df_update- to be updated  in SQL database
     df_insert - to be inserted in SQL database
+    datetime_last_harvest is used to define whether the term is up to date or not
     """
     if len(df1)!=0:  # nothing to insert or update if df1 is empty
         not_in_database=[df1.iloc[i]['semantic_uri'] not in df2['semantic_uri'].get_values() for i in range(len(df1))] 
         df1['action']= np.where(not_in_database ,'insert', '')   # if there are different elements we always have to insert them
         df_insert=df1[df1['action']=='insert']
+        if len(df_insert)==0:
+            df_insert=None
         ## update cond
         if len(df2)!=0:   # nothing to update if df2(pangaea db) is empty
             in_database=np.invert(not_in_database)
@@ -172,45 +174,57 @@ def dataframe_difference(df1,df2):
             df1_in_database_outdated=[df1_in_database_T[i]>df2_T[i] for i in range(len(df1_in_database_T))]
             df1['action']= np.where(df1_in_database_outdated ,'update', '')
             df_update=df1[df1['action']=='update']
+            if len(df_update)==0: # make sure not to return empty dataframes!  
+                 df_update=None
         else:
             df_update=None
+        
         return df_insert,df_update
+    
     else:
         df_insert,df_update=None,None
+        
         return df_insert,df_update         #df_insert/df_update.shape=(n,7) only 7 initial columns!
     
 
 
-# create dataframe to be inserted (from harvested values and default values)
-def insert_df_shaper(df):
+# create dataframe to be inserted or updated (from harvested values and default values)
+def df_shaper(df,df_pang=None):
     
     # Chechk the last id_term in SQL db
-    con=create_db_connection()
-    cursor=con.cursor()
-    cursor.execute('SELECT MAX(id_term) FROM public.term')
-    max_id_term=int(cursor.fetchall()[0][0])
+    
+    
+    if df_pang is not None:   # if UPDATE id_terms stay the same
+        uri_list=list(df.semantic_uri)  # list of sematic_uri's of the df_update dataframe
+        mask = df_pang.semantic_uri.apply(lambda x: x in uri_list )   # corresponding id_terms's from df2 (PANGAEA dataframe to be updated)
+        df=df.assign(id_term=df_pang[mask].id_term.values)
+    else: # if INSERT generate new id_term's 
+        con=create_db_connection()
+        cursor=con.cursor()
+        cursor.execute('SELECT MAX(id_term) FROM public.term')
+        max_id_term=int(cursor.fetchall()[0][0])
+        df=df.assign(id_term=list(range(1+max_id_term,len(df)+max_id_term+1)))
+        if con is not None:
+            con.close()
     # assign deafult values to columns
-    df['id_term']=list(range(1+max_id_term,len(df)+max_id_term+1))
-    df['abbreviation']=""
-    df['datetime_created']=df['datetime_last_harvest'] #   
-    df['comment']=None ## convert it to NULL for SQL ?
-    df['datetime_updated']=pd.to_datetime(datetime.datetime.now()) # assign current time
-    df['master']=0
-    df['root']=0
-    df['id_term_category']=1
-    df['id_terminology']=21
-    df['id_user_created']=7
-    df['id_user_updated']=7
+    
+    df=df.assign(abbreviation="")
+    df=df.assign(datetime_created=df.datetime_last_harvest) #   
+    df=df.assign(comment=None) ## convert it to NULL for SQL ?
+    df=df.assign(datetime_updated=pd.to_datetime(datetime.datetime.now())) # assign current time
+    df=df.assign(master=0)
+    df=df.assign(root=0)
+    df=df.assign(id_term_category=1)
+    df=df.assign(id_terminology=21)
+    df=df.assign(id_user_created=7)
+    df=df.assign(id_user_updated=7)
     df=df[['id_term', 'abbreviation', 'name', 'comment', 'datetime_created',
        'datetime_updated', 'description', 'master', 'root', 'semantic_uri',
        'uri', 'id_term_category', 'id_term_status', 'id_terminology',
        'id_user_created', 'id_user_updated', 'datetime_last_harvest']]
 #    df.set_index('id_term', inplace=True)
-    if con is not None:
-            con.close()
+    
     return df
-
-
 
 
 def batch_insert_new_terms(table,df):
@@ -236,8 +250,55 @@ def batch_insert_new_terms(table,df):
         if conn_pg is not None:
             cur.close()
             conn_pg.close()
-
-
+   
+def batch_update_terms(df,columns_to_update,table,condition='id_term'):
+        try:
+            conn_pg = create_db_connection()
+            conn_pg.autocommit = False
+            cur = conn_pg.cursor()
+            df=df[columns_to_update]
+            list_of_tuples = [tuple(x) for x in df.values]
+            values='=%s,'.join(columns_to_update[:-1])
+            update_stmt='UPDATE {table_name} SET {values}=%s where {condition}=%s'.format(
+                    table_name=table,values=values,condition='id_term')
+            psycopg2.extras.execute_batch(cur, update_stmt, list_of_tuples)
+            logger.debug("batch_update_vernacular_terms - record updated successfully ")
+            # Commit your changes
+            conn_pg.commit()
+        except psycopg2.DatabaseError as error:
+            logger.debug('Failed to update record to database rollback: %s' % error)
+            conn_pg.rollback()
+        finally:
+            if conn_pg is not None:
+                cur.close()
+                conn_pg.close()
+                
+                
+def main():
+    root_main=read_xml(filename=filename)  # can read from local xml file or webpage 
+    
+    df1=xml_parser(root_main)
+    
+    # reading the 'term' table from  pangaea_db database
+    sql_command='SELECT * FROM public.term \
+        WHERE id_terminology=21'
+    df2=dataframe_from_database(sql_command)
+ 
+    df_insert,df_update=dataframe_difference(df1,df2)        #df_insert/df_update.shape=(n,7)!//df_insert,df_update can be None if df1 or df2 are empty
+    
+    # execute INSERT statement if df_insert is not empty
+    if df_insert is not None:
+        df_insert_shaped=df_shaper(df_insert)         # df_ins.shape=(n,17) ready to insert into SQL DB  
+        batch_insert_new_terms(table='term',df=df_insert_shaped)
+        
+    # execute UPDATE statement if df_update is not empty
+    if df_update is not None:
+        df_update_shaped=df_shaper(df_update,df_pang=df2)         # add default columns to the table (prepare to be updated to PANGAEA DB)
+        columns_to_update=['name','datetime_last_harvest','description','datetime_updated',
+                               'id_term_status','uri','semantic_uri','id_term']
+        batch_update_terms(df=df_update_shaped,columns_to_update=columns_to_update,
+                           table='term')
+        
 
 if __name__=='__main__':
         #tags abbreviations
@@ -254,24 +315,7 @@ if __name__=='__main__':
     url_test='http://vocab.nerc.ac.uk/collection/L05/current/364/'
     filename='main_xml.xml'
     #MAIN()
-    root_main=read_xml(filename=filename)  # can read from local xml file or webpage 
-    
-    df1=xml_parser(root_main)
-    
-    # reading the 'term' table from  pangaea_db database
-    sql_command='SELECT * FROM public.term \
-        WHERE id_terminology=21'
-    df2=dataframe_from_database(sql_command)
- 
-    df_insert,df_update=dataframe_difference(df1,df2)        #df_insert/df_update.shape=(n,7)!//df_insert,df_update can be None if df1 or df2 are empty
-    # add default columns to the table (prepare to be inserted into PANGAEA DB)
-    df_insert_shaped=insert_df_shaper(df_insert)         # df_ins.shape=(n,17) ready to insert into SQL DB 
-      # execute INSERT statement
-    batch_insert_new_terms(table='term',df=df_insert_shaped)
-    
-    
+    main()
     
    
-    
-    # execute UPDATE statement
     
