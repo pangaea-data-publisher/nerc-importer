@@ -57,7 +57,7 @@ def read_xml(url=None,filename=None):
         return root_main
     
     
-def xml_parser(root_main):
+def xml_parser(root_main,collection_name='L05'):
     """
     Takes root(ET) of a Collection e.g. 'http://vocab.nerc.ac.uk/collection/L05/current/accepted/'
     Returns pandas DataFrame with harvested fields (e.g.semantic_uri,name,etc.) for every member of the collection
@@ -73,6 +73,19 @@ def xml_parser(root_main):
         D['uri']=member.find('.'+skos+'Concept').attrib['{http://www.w3.org/1999/02/22-rdf-syntax-ns#}about']
         D['deprecated']=member.find('.'+skos+'Concept'+owl+'deprecated').text
         D['id_term_status']=int(np.where(D['deprecated']=='false',3,1))               # important to have int intead of ndarray
+        
+        # RELATED TERMS
+        related=member.findall('.'+skos+'Concept'+skos+'related')
+        broader=member.findall('.'+skos+'Concept'+skos+'broader')
+        narrower=member.findall('.'+skos+'Concept'+skos+'narrower')
+        related_total=related+broader+narrower
+        related_uri_list=list()
+        for element in related_total:
+            related_uri=element.attrib['{http://www.w3.org/1999/02/22-rdf-syntax-ns#}resource']
+            if 'collection/'+collection_name in related_uri:
+                related_uri_list.append(related_uri)
+        D['related_uri']=related_uri_list
+        
         data.append(D)
     df=pd.DataFrame(data)
     df['datetime_last_harvest']=pd.to_datetime(df['datetime_last_harvest'])            # convert to TimeStamp 
@@ -98,8 +111,7 @@ def get_init_params(config_file_name="import.ini"):
     # READING INI FILE
     init_dict['user']=configParser.get('DB','pangaea_db_user')
     init_dict['pwd']=configParser.get('DB','pangaea_db_pwd')
-#    pangaea_db_db=configParser.get('DB','pangaea_db_db')
-    init_dict['db']=configParser.get('DB','pangaea_db_db_test')
+    init_dict['db']=configParser.get('DB','pangaea_db_db')
     init_dict['host']=configParser.get('DB','pangaea_db_host')
     init_dict['port']=configParser.get('DB','pangaea_db_port')
 
@@ -172,8 +184,8 @@ def dataframe_difference(df1,df2):
             df2_T=[df2[df2['semantic_uri']==s_uri]['datetime_last_harvest'].iloc[0] for s_uri in df1_in_database['semantic_uri']]
             # create list of booleans (condition for outdated elements)
             df1_in_database_outdated=[df1_in_database_T[i]>df2_T[i] for i in range(len(df1_in_database_T))]
-            df1['action']= np.where(df1_in_database_outdated ,'update', '')
-            df_update=df1[df1['action']=='update']
+            df1_in_database=df1_in_database.assign(action= np.where(df1_in_database_outdated ,'update', ''))
+            df_update=df1_in_database[df1_in_database['action']=='update']
             if len(df_update)==0: # make sure not to return empty dataframes!  
                  df_update=None
         else:
@@ -227,6 +239,31 @@ def df_shaper(df,df_pang=None):
     return df
 
 
+def related_df_shaper(df):
+    """
+    INPUT==dataframe with primary id_term and related_terms, where every 
+    element of related_terms column is a list containing from 1 to n related id terms
+    OUTPUT==dataframe ready to be inserted into term_relation PANGEA table
+    """ 
+    id_related=list()
+    id_primary=list()
+    for id_term in df.id_term:
+        
+        related_id_list=df.loc[df.id_term==id_term,'related_terms'].values[0]
+        for i in related_id_list:
+            id_related.append(i)
+            id_primary.append(id_term)
+            
+    df_rs=pd.DataFrame({'id_term':id_primary,'id_term_related':id_related})
+    df_rs=df_rs.assign(id_relation_type=1)
+    now=pd.to_datetime(datetime.datetime.now())
+    df_rs=df_rs.assign(datetime_created=now)
+    df_rs=df_rs.assign(datetime_updated=now)
+    df_rs=df_rs.assign(id_user_created=7)
+    df_rs=df_rs.assign(id_user_updated=7)
+   
+    return df_rs
+
 def batch_insert_new_terms(table,df):
     try:
         conn_pg=create_db_connection()
@@ -273,17 +310,74 @@ def batch_update_terms(df,columns_to_update,table,condition='id_term'):
                 cur.close()
                 conn_pg.close()
                 
+
+def get_related_semantic_uri(df):
+    '''
+    INPUT - df1 - dataframe read from xml containing related_uri column
+    OUTPUT - dataframe containing semantic_uri corresponding to the uri's in the INPUT file
+    '''
+    df_subset=df[df.related_uri.apply(lambda x:len(x)!=0)]
+    related_s_uri=list()
+    for related_uri_list in df_subset.related_uri:
+        templist=list()
+        for related_uri in related_uri_list:
+            current_list=df_subset.loc[df_subset.uri==related_uri,'semantic_uri']
+            if len(current_list)!=0:
+                templist.append(current_list.values[0])
+        
+        related_s_uri.append(templist)
+    df_subset=df_subset.assign(related_s_uri=related_s_uri)
+    mask=[len(i)!=0 for i in df_subset.related_s_uri]
+    
+    return df_subset[['semantic_uri','related_s_uri']][mask]
+
+
+def get_primary_keys(df_related,df_pang):
+    '''
+    INPUT - df_related dataframe with column of semantic_uri and 2nd column of related semantic uri
+    OUTPUT - dataframe with 2 additional columns - id_term's corresponding to the 2 columns in INPUT dataframe
+    '''
+    id_term_list=list()
+    for s_uri in list(df_related.semantic_uri):
+        id_term_list.append(df_pang.loc[df_pang.semantic_uri==s_uri,'id_term'].values[0])
+        
+    df_related=df_related.assign(id_term=id_term_list) # create id_term column conatining id_terms form df_pang corresponding to semantic_uri from df_related
+    
+    related_id_terms=list()
+    #create a column id_term_related 
+    for s_uri_list in df_related.related_s_uri:
+        templist=list()
+        for s_uri in s_uri_list:
+            templist.append(df_pang.loc[df_pang.semantic_uri==s_uri,'id_term'].values[0])
+        related_id_terms.append(templist)
+    df_related['related_terms']=related_id_terms
+    
+    return df_related
+    
+    
                 
 def main():
-    root_main=read_xml(filename=filename)  # can read from local xml file or webpage 
     
+    #DEFAULT PARAMETERS - tags abbreviations  
+    skos="/{http://www.w3.org/2004/02/skos/core#}"
+    dc="/{http://purl.org/dc/terms/}"
+    rdf="/{http://www.w3.org/1999/02/22-rdf-syntax-ns#}"
+    pav="/{http://purl.org/pav/}"
+    owl="/{http://www.w3.org/2002/07/owl#}"
+    # parameters of xml files/webpages
+    url_main='http://vocab.nerc.ac.uk/collection/L05/current/accepted/'
+    url_test='http://vocab.nerc.ac.uk/collection/L05/current/364/'
+    filename='main_xml.xml'
+    
+    
+    # TERM_TABLE UPDATE/INSERT 
+    root_main=read_xml(url=url_main)  # can read from local xml file or webpage 
     df1=xml_parser(root_main)
-    
+
     # reading the 'term' table from  pangaea_db database
     sql_command='SELECT * FROM public.term \
         WHERE id_terminology=21'
     df2=dataframe_from_database(sql_command)
- 
     df_insert,df_update=dataframe_difference(df1,df2)        #df_insert/df_update.shape=(n,7)!//df_insert,df_update can be None if df1 or df2 are empty
     
     # execute INSERT statement if df_insert is not empty
@@ -300,22 +394,26 @@ def main():
                            table='term')
         
 
+    # TERM_RELATION TABLE
+    df_related=get_related_semantic_uri(df1)
+    df_related_pk=get_primary_keys(df_related,df2)
+    # call shaper to get df into proper shape
+    df_related_shaped=related_df_shaper(df_related_pk)
+    # call batch import 
+    batch_insert_new_terms(table='term_relation',df=df_related_shaped)
+        
+
 if __name__=='__main__':
-        #tags abbreviations
-    skos="/{http://www.w3.org/2004/02/skos/core#}"
-    dc="/{http://purl.org/dc/terms/}"
-    rdf="/{http://www.w3.org/1999/02/22-rdf-syntax-ns#}"
-    pav="/{http://purl.org/pav/}"
-    owl="/{http://www.w3.org/2002/07/owl#}"
+
     # call logger,start logging
     logger = initLog()
     logger.debug("Starting NERC harvester...")
-    # parameters of xml files/webpages
-    url_main='http://vocab.nerc.ac.uk/collection/L05/current/accepted/'
-    url_test='http://vocab.nerc.ac.uk/collection/L05/current/364/'
-    filename='main_xml.xml'
+    a = datetime.datetime.now()
     #MAIN()
     main()
-    
+    b = datetime.datetime.now()
+    diff = b-a
+    logger.debug('Total execution time:%s' %diff)
+    logger.debug('----------------------------------------')
    
     
