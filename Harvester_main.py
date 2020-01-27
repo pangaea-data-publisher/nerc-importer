@@ -77,14 +77,20 @@ def xml_parser(root_main,collection_name='L05'):
         # RELATED TERMS
         related=member.findall('.'+skos+'Concept'+skos+'related')
         broader=member.findall('.'+skos+'Concept'+skos+'broader')
-        narrower=member.findall('.'+skos+'Concept'+skos+'narrower')
-        related_total=related+broader+narrower
+        related_total=related+broader
         related_uri_list=list()
+        id_relation_type_list=list()
         for element in related_total:
             related_uri=element.attrib['{http://www.w3.org/1999/02/22-rdf-syntax-ns#}resource']
             if 'collection/'+collection_name in related_uri:
                 related_uri_list.append(related_uri)
+                if 'broader' in element.tag:
+                    id_relation_type_list.append(1)              # For broader, use relation type 1 (has broader term)
+                elif 'related' in element.tag:
+                    id_relation_type_list.append(7)    #For related, use relation type 7 (is related to)
+        
         D['related_uri']=related_uri_list
+        D['id_relation_type']=id_relation_type_list
         
         data.append(D)
     df=pd.DataFrame(data)
@@ -247,15 +253,17 @@ def related_df_shaper(df):
     """ 
     id_related=list()
     id_primary=list()
+    id_relation_type=list()
     for id_term in df.id_term:
         
         related_id_list=df.loc[df.id_term==id_term,'related_terms'].values[0]
-        for i in related_id_list:
-            id_related.append(i)
+        id_relation_type_list=df.loc[df.id_term==id_term,'id_relation_type'].values[0]
+        for i in range(len(related_id_list)):
+            id_related.append(related_id_list[i])
+            id_relation_type.append(id_relation_type_list[i])
             id_primary.append(id_term)
             
-    df_rs=pd.DataFrame({'id_term':id_primary,'id_term_related':id_related})
-    df_rs=df_rs.assign(id_relation_type=1)
+    df_rs=pd.DataFrame({'id_term':id_primary,'id_term_related':id_related,'id_relation_type':id_relation_type})
     now=pd.to_datetime(datetime.datetime.now())
     df_rs=df_rs.assign(datetime_created=now)
     df_rs=df_rs.assign(datetime_updated=now)
@@ -321,7 +329,7 @@ def get_related_semantic_uri(df):
     for related_uri_list in df_subset.related_uri:
         templist=list()
         for related_uri in related_uri_list:
-            current_list=df_subset.loc[df_subset.uri==related_uri,'semantic_uri']
+            current_list=df.loc[df.uri==related_uri,'semantic_uri']
             if len(current_list)!=0:
                 templist.append(current_list.values[0])
         
@@ -329,7 +337,7 @@ def get_related_semantic_uri(df):
     df_subset=df_subset.assign(related_s_uri=related_s_uri)
     mask=[len(i)!=0 for i in df_subset.related_s_uri]
     
-    return df_subset[['semantic_uri','related_s_uri']][mask]
+    return df_subset[['semantic_uri','related_s_uri','id_relation_type']][mask]
 
 
 def get_primary_keys(df_related,df_pang):
@@ -358,16 +366,7 @@ def get_primary_keys(df_related,df_pang):
                 
 def main():
     
-    #DEFAULT PARAMETERS - tags abbreviations  
-    skos="/{http://www.w3.org/2004/02/skos/core#}"
-    dc="/{http://purl.org/dc/terms/}"
-    rdf="/{http://www.w3.org/1999/02/22-rdf-syntax-ns#}"
-    pav="/{http://purl.org/pav/}"
-    owl="/{http://www.w3.org/2002/07/owl#}"
-    # parameters of xml files/webpages
-    url_main='http://vocab.nerc.ac.uk/collection/L05/current/accepted/'
-    url_test='http://vocab.nerc.ac.uk/collection/L05/current/364/'
-    filename='main_xml.xml'
+   
     
     
     # TERM_TABLE UPDATE/INSERT 
@@ -405,6 +404,17 @@ def main():
 
 if __name__=='__main__':
 
+     #DEFAULT PARAMETERS - tags abbreviations  
+    skos="/{http://www.w3.org/2004/02/skos/core#}"
+    dc="/{http://purl.org/dc/terms/}"
+    rdf="/{http://www.w3.org/1999/02/22-rdf-syntax-ns#}"
+    pav="/{http://purl.org/pav/}"
+    owl="/{http://www.w3.org/2002/07/owl#}"
+    # parameters of xml files/webpages
+    url_main='http://vocab.nerc.ac.uk/collection/L05/current/accepted/'
+    url_test='http://vocab.nerc.ac.uk/collection/L05/current/364/'
+    filename='main_xml.xml'
+    
     # call logger,start logging
     logger = initLog()
     logger.debug("Starting NERC harvester...")
