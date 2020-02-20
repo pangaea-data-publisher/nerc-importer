@@ -1,0 +1,17 @@
+
+    [
+
+	{
+	"collection_name":"L05",
+        "uri":"http://vocab.nerc.ac.uk/collection/L05/current/",
+        "id_terminology":"21",
+        "id_user_created":"6"
+    },
+
+    {
+	"collection_name":"L22",
+        "uri":"http://vocab.nerc.ac.uk/collection/L22/current/",
+        "id_terminology":"22",
+        "id_user_created":"7"
+    }
+		]

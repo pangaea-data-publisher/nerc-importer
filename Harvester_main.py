@@ -11,6 +11,8 @@ import pandas.io.sql as psql
 import logging
 from sqlalchemy import create_engine
 import datetime
+import json
+
 
 def initLog():
     # create logger 
@@ -101,7 +103,7 @@ def xml_parser(root_main,collection_name='L05'):
    
 
 # functions for creation of DB connection   -START    
-def get_init_params(config_file_name="import.ini"):
+def get_db_params(config_file_name="config\import.ini"):
     """
     Sets up database connection from config file.
     Input:
@@ -113,18 +115,24 @@ def get_init_params(config_file_name="import.ini"):
     configfile=config_file_name
     configfile_path=os.path.abspath(configfile)
     configParser.read(configfile_path)
-    init_dict=dict()
+    db_params=dict()
     # READING INI FILE
-    init_dict['user']=configParser.get('DB','pangaea_db_user')
-    init_dict['pwd']=configParser.get('DB','pangaea_db_pwd')
-    init_dict['db']=configParser.get('DB','pangaea_db_db')
-    init_dict['host']=configParser.get('DB','pangaea_db_host')
-    init_dict['port']=configParser.get('DB','pangaea_db_port')
+    db_params['user']=configParser.get('DB','pangaea_db_user')
+    db_params['pwd']=configParser.get('DB','pangaea_db_pwd')
+    db_params['db']=configParser.get('DB','pangaea_db_db')
+    db_params['host']=configParser.get('DB','pangaea_db_host')
+    db_params['port']=configParser.get('DB','pangaea_db_port')
 
-    return init_dict
+    return db_params
     
+def get_terminologies_params(fname=r'config\terminologies.json'):
+    
+    with open(fname) as json_file:
+        term_data=json.load(json_file)
+        
+    return term_data
 
-def get_engine(init_dict):
+def get_engine(db_params):
     """
     Get SQLalchemy engine using credentials.
     Input:
@@ -136,8 +144,8 @@ def get_engine(init_dict):
     """
 
     url = 'postgresql://{user}:{passwd}@{host}:{port}/{db}'.format(
-        user=init_dict['user'], passwd=init_dict['pwd'], host=init_dict['host'], 
-        port=init_dict['port'], db=init_dict['db'])
+        user=db_params['user'], passwd=db_params['pwd'], host=db_params['host'], 
+        port=db_params['port'], db=db_params['db'])
     engine = create_engine(url, pool_size = 50)
     
     return engine
@@ -145,8 +153,8 @@ def get_engine(init_dict):
 
 def create_db_connection():
     try:
-        init_dict= get_init_params(config_file_name="import.ini")  # gets initial paramters from import.ini file
-        engine=get_engine(init_dict)   # gets engine using initial DB parameters 
+        #  initial paramters from import.ini - db_params
+        engine=get_engine(db_params)   # gets engine using initial DB parameters 
         con = engine.raw_connection() 
         logger.info("Connected to PostgreSQL database!")
     except IOError:
@@ -170,13 +178,17 @@ def dataframe_difference(df1,df2):
     """
     df1=dataframe 1 result of parsing XML
     df2=dataframe 2 read from postgreSQL database
-    retutns df_insert,df_update:
+    returns df_insert,df_update:
     df_update- to be updated  in SQL database
     df_insert - to be inserted in SQL database
     datetime_last_harvest is used to define whether the term is up to date or not
     """
     if len(df1)!=0:  # nothing to insert or update if df1 is empty
-        not_in_database=[df1.iloc[i]['semantic_uri'] not in df2['semantic_uri'].get_values() for i in range(len(df1))] 
+        not_in_database=[
+                        df1.iloc[i]['semantic_uri'] 
+                        not in df2['semantic_uri'].values 
+                        for i in range(len(df1))
+                        ] 
         df1['action']= np.where(not_in_database ,'insert', '')   # if there are different elements we always have to insert them
         df_insert=df1[df1['action']=='insert']
         if len(df_insert)==0:
@@ -186,8 +198,14 @@ def dataframe_difference(df1,df2):
             in_database=np.invert(not_in_database)
             df1_in_database=df1[in_database]  
             # create Timestamp lists with times of corresponding elements in df1 and df2 //corresponding elements chosen by semanntic_uri
-            df1_in_database_T=[df1_in_database[df1_in_database['semantic_uri']==s_uri]['datetime_last_harvest'].iloc[0] for s_uri in df1_in_database['semantic_uri']]
-            df2_T=[df2[df2['semantic_uri']==s_uri]['datetime_last_harvest'].iloc[0] for s_uri in df1_in_database['semantic_uri']]
+            df1_in_database_T=[
+                               df1_in_database[df1_in_database['semantic_uri']==s_uri]['datetime_last_harvest'].iloc[0] 
+                               for s_uri in df1_in_database['semantic_uri']
+                               ]
+            df2_T=[
+                   df2[df2['semantic_uri']==s_uri]['datetime_last_harvest'].iloc[0] 
+                   for s_uri in df1_in_database['semantic_uri']
+                   ]
             # create list of booleans (condition for outdated elements)
             df1_in_database_outdated=[df1_in_database_T[i]>df2_T[i] for i in range(len(df1_in_database_T))]
             df1_in_database=df1_in_database.assign(action= np.where(df1_in_database_outdated ,'update', ''))
@@ -233,8 +251,8 @@ def df_shaper(df,df_pang=None):
     df=df.assign(master=0)
     df=df.assign(root=0)
     df=df.assign(id_term_category=1)
-    df=df.assign(id_terminology=21)
-    df=df.assign(id_user_created=7)
+    df=df.assign(id_terminology=terminology['id_terminology'])
+    df=df.assign(id_user_created=terminology['id_user_created'])
     df=df.assign(id_user_updated=7)
     df=df[['id_term', 'abbreviation', 'name', 'comment', 'datetime_created',
        'datetime_updated', 'description', 'master', 'root', 'semantic_uri',
@@ -362,15 +380,27 @@ def get_primary_keys(df_related,df_pang):
     
     return df_related
     
+
+def terminology_updater(terminology):
+    '''
+    Updates one terminology at a time, fills out term, term_relations tables
+    Parameters
+    ----------
+    terminology : TYPE:dictionary
+                  DESCRIPTION:{id _terminology,terminology_uri,id_user_created}
+        
+    db_params(implicit,global) :   TYPE: dictionary
+                  DESCRIPTION:pangea db password, user name, db host and etc.
+    -------
+    Returns:  None
+    '''
     
-                
-def main():
     
-   
+    url_collection=terminology['uri']
     
     
     # TERM_TABLE UPDATE/INSERT 
-    root_main=read_xml(url=url_main)  # can read from local xml file or webpage 
+    root_main=read_xml(url=url_collection)  # can read from local xml file or webpage 
     df1=xml_parser(root_main)
 
     # reading the 'term' table from  pangaea_db database
@@ -400,8 +430,23 @@ def main():
     df_related_shaped=related_df_shaper(df_related_pk)
     # call batch import 
     batch_insert_new_terms(table='term_relation',df=df_related_shaped)
-        
-
+    
+    
+def main():
+   
+    global db_params 
+    global collection_names # to look for relations in all mentioned collections (xml_parser)
+    global terminology
+    # read the list of temonilogies from json file
+    terminologies=get_terminologies_params(fname=r'config\terminologies.json')
+    db_params=get_db_params(config_file_name="config\import.ini")
+    collection_names=[collection['collection_name'] for collection in terminologies]
+    
+    for terminology in terminologies:
+        terminology_updater(terminology)
+    
+    
+    
 if __name__=='__main__':
 
      #DEFAULT PARAMETERS - tags abbreviations  
@@ -411,9 +456,9 @@ if __name__=='__main__':
     pav="/{http://purl.org/pav/}"
     owl="/{http://www.w3.org/2002/07/owl#}"
     # parameters of xml files/webpages
-    url_main='http://vocab.nerc.ac.uk/collection/L05/current/accepted/'
-    url_test='http://vocab.nerc.ac.uk/collection/L05/current/364/'
-    filename='main_xml.xml'
+    # url_main='http://vocab.nerc.ac.uk/collection/L05/current/accepted/'
+    # url_test='http://vocab.nerc.ac.uk/collection/L05/current/364/'
+    # filename='main_xml.xml'
     
     # call logger,start logging
     logger = initLog()
