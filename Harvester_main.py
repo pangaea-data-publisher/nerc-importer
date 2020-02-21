@@ -66,6 +66,7 @@ def xml_parser(root_main,collection_name='L05'):
     """
     data=[]
     members=root_main.findall('./'+skos+'Collection'+skos+'member')
+    
     for member in members:
         D=dict()
         D['datetime_last_harvest']=member.find('.'+skos+'Concept'+dc+'date').text  # authoredOn
@@ -82,9 +83,11 @@ def xml_parser(root_main,collection_name='L05'):
         related_total=related+broader
         related_uri_list=list()
         id_relation_type_list=list()
+        
         for element in related_total:
             related_uri=element.attrib['{http://www.w3.org/1999/02/22-rdf-syntax-ns#}resource']
-            if 'collection/'+collection_name in related_uri:
+            
+            if any(name in related_uri for name in collection_names):  # if related_uri contains one of the collections names (L05,L22,...)
                 related_uri_list.append(related_uri)
                 if 'broader' in element.tag:
                     id_relation_type_list.append(1)              # For broader, use relation type 1 (has broader term)
@@ -251,8 +254,8 @@ def df_shaper(df,df_pang=None):
     df=df.assign(master=0)
     df=df.assign(root=0)
     df=df.assign(id_term_category=1)
-    df=df.assign(id_terminology=terminology['id_terminology'])
-    df=df.assign(id_user_created=terminology['id_user_created'])
+    df=df.assign(id_terminology=21)
+    df=df.assign(id_user_created=7)
     df=df.assign(id_user_updated=7)
     df=df[['id_term', 'abbreviation', 'name', 'comment', 'datetime_created',
        'datetime_updated', 'description', 'master', 'root', 'semantic_uri',
@@ -381,7 +384,7 @@ def get_primary_keys(df_related,df_pang):
     return df_related
     
 
-def terminology_updater(terminology):
+def terminology_updater(url_collection):
     '''
     Updates one terminology at a time, fills out term, term_relations tables
     Parameters
@@ -394,9 +397,6 @@ def terminology_updater(terminology):
     -------
     Returns:  None
     '''
-    
-    
-    url_collection=terminology['uri']
     
     
     # TERM_TABLE UPDATE/INSERT 
@@ -436,14 +436,15 @@ def main():
    
     global db_params 
     global collection_names # to look for relations in all mentioned collections (xml_parser)
-    global terminology
+
     # read the list of temonilogies from json file
     terminologies=get_terminologies_params(fname=r'config\terminologies.json')
     db_params=get_db_params(config_file_name="config\import.ini")
-    collection_names=[collection['collection_name'] for collection in terminologies]
+    
+    collection_names=['collection/'+collection['collection_name'] for collection in terminologies]
     
     for terminology in terminologies:
-        terminology_updater(terminology)
+        terminology_updater(terminology['uri'])
     
     
     
