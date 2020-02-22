@@ -59,7 +59,7 @@ def read_xml(url=None,filename=None):
         return root_main
     
     
-def xml_parser(root_main,collection_name='L05'):
+def xml_parser(root_main):
     """
     Takes root(ET) of a Collection e.g. 'http://vocab.nerc.ac.uk/collection/L05/current/accepted/'
     Returns pandas DataFrame with harvested fields (e.g.semantic_uri,name,etc.) for every member of the collection
@@ -118,15 +118,15 @@ def get_db_params(config_file_name="config\import.ini"):
     configfile=config_file_name
     configfile_path=os.path.abspath(configfile)
     configParser.read(configfile_path)
-    db_params=dict()
+    params=dict()
     # READING INI FILE
-    db_params['user']=configParser.get('DB','pangaea_db_user')
-    db_params['pwd']=configParser.get('DB','pangaea_db_pwd')
-    db_params['db']=configParser.get('DB','pangaea_db_db')
-    db_params['host']=configParser.get('DB','pangaea_db_host')
-    db_params['port']=configParser.get('DB','pangaea_db_port')
+    params['user']=configParser.get('DB','pangaea_db_user')
+    params['pwd']=configParser.get('DB','pangaea_db_pwd')
+    params['db']=configParser.get('DB','pangaea_db_db')
+    params['host']=configParser.get('DB','pangaea_db_host')
+    params['port']=configParser.get('DB','pangaea_db_port')
 
-    return db_params
+    return params
     
 def get_terminologies_params(fname=r'config\terminologies.json'):
     
@@ -176,43 +176,43 @@ def dataframe_from_database(sql_command):
     return df
 
 
-# Identify up-to-date records in df1
-def dataframe_difference(df1,df2):
+# Identify up-to-date records in df_from_nerc
+def dataframe_difference(df_from_nerc,df_from_pangea):
     """
-    df1=dataframe 1 result of parsing XML
-    df2=dataframe 2 read from postgreSQL database
+    df_from_nerc=dataframe 1 result of parsing XML
+    df_from_pangea=dataframe 2 read from postgreSQL database
     returns df_insert,df_update:
     df_update- to be updated  in SQL database
     df_insert - to be inserted in SQL database
     datetime_last_harvest is used to define whether the term is up to date or not
     """
-    if len(df1)!=0:  # nothing to insert or update if df1 is empty
+    if len(df_from_nerc)!=0:  # nothing to insert or update if df_from_nerc is empty
         not_in_database=[
-                        df1.iloc[i]['semantic_uri'] 
-                        not in df2['semantic_uri'].values 
-                        for i in range(len(df1))
+                        df_from_nerc.iloc[i]['semantic_uri'] 
+                        not in df_from_pangea['semantic_uri'].values 
+                        for i in range(len(df_from_nerc))
                         ] 
-        df1['action']= np.where(not_in_database ,'insert', '')   # if there are different elements we always have to insert them
-        df_insert=df1[df1['action']=='insert']
+        df_from_nerc['action']= np.where(not_in_database ,'insert', '')   # if there are different elements we always have to insert them
+        df_insert=df_from_nerc[df_from_nerc['action']=='insert']
         if len(df_insert)==0:
             df_insert=None
         ## update cond
-        if len(df2)!=0:   # nothing to update if df2(pangaea db) is empty
+        if len(df_from_pangea)!=0:   # nothing to update if df_from_pangea(pangaea db) is empty
             in_database=np.invert(not_in_database)
-            df1_in_database=df1[in_database]  
-            # create Timestamp lists with times of corresponding elements in df1 and df2 //corresponding elements chosen by semanntic_uri
-            df1_in_database_T=[
-                               df1_in_database[df1_in_database['semantic_uri']==s_uri]['datetime_last_harvest'].iloc[0] 
-                               for s_uri in df1_in_database['semantic_uri']
+            df_from_nerc_in_database=df_from_nerc[in_database]  
+            # create Timestamp lists with times of corresponding elements in df_from_nerc and df_from_pangea //corresponding elements chosen by semanntic_uri
+            df_from_nerc_in_database_T=[
+                               df_from_nerc_in_database[df_from_nerc_in_database['semantic_uri']==s_uri]['datetime_last_harvest'].iloc[0] 
+                               for s_uri in df_from_nerc_in_database['semantic_uri']
                                ]
-            df2_T=[
-                   df2[df2['semantic_uri']==s_uri]['datetime_last_harvest'].iloc[0] 
-                   for s_uri in df1_in_database['semantic_uri']
+            df_from_pangea_T=[
+                   df_from_pangea[df_from_pangea['semantic_uri']==s_uri]['datetime_last_harvest'].iloc[0] 
+                   for s_uri in df_from_nerc_in_database['semantic_uri']
                    ]
             # create list of booleans (condition for outdated elements)
-            df1_in_database_outdated=[df1_in_database_T[i]>df2_T[i] for i in range(len(df1_in_database_T))]
-            df1_in_database=df1_in_database.assign(action= np.where(df1_in_database_outdated ,'update', ''))
-            df_update=df1_in_database[df1_in_database['action']=='update']
+            df_from_nerc_in_database_outdated=[df_from_nerc_in_database_T[i]>df_from_pangea_T[i] for i in range(len(df_from_nerc_in_database_T))]
+            df_from_nerc_in_database=df_from_nerc_in_database.assign(action= np.where(df_from_nerc_in_database_outdated ,'update', ''))
+            df_update=df_from_nerc_in_database[df_from_nerc_in_database['action']=='update']
             if len(df_update)==0: # make sure not to return empty dataframes!  
                  df_update=None
         else:
@@ -235,7 +235,7 @@ def df_shaper(df,df_pang=None):
     
     if df_pang is not None:   # if UPDATE id_terms stay the same
         uri_list=list(df.semantic_uri)  # list of sematic_uri's of the df_update dataframe
-        mask = df_pang.semantic_uri.apply(lambda x: x in uri_list )   # corresponding id_terms's from df2 (PANGAEA dataframe to be updated)
+        mask = df_pang.semantic_uri.apply(lambda x: x in uri_list )   # corresponding id_terms's from df_from_pangea (PANGAEA dataframe to be updated)
         df=df.assign(id_term=df_pang[mask].id_term.values)
     else: # if INSERT generate new id_term's 
         con=create_db_connection()
@@ -293,6 +293,38 @@ def related_df_shaper(df):
    
     return df_rs
 
+def insert_update_relations(table,df):
+    try:
+        conn_pg = create_db_connection()
+        conn_pg.autocommit = False
+        if len(df) > 0:
+            df_columns = list(df)
+            # create (col1,col2,...)
+            columns = ",".join(df_columns)
+            # create VALUES('%s', '%s",...) one '%s' per column
+            #values = "VALUES({})".format(",".join(["%s" for _ in df_columns]))
+            # create INSERT INTO table (columns) VALUES('%s',...)
+            insert_stmt = "INSERT INTO {} AS t ({}) VALUES %s ".format(table, columns)
+            on_conflict = "ON CONFLICT ON CONSTRAINT term_relation_id_term_id_term_related_key " \
+                          "DO UPDATE SET id_relation_type = EXCLUDED.id_relation_type , " \
+                          "datetime_updated = EXCLUDED.datetime_updated , id_user_updated = EXCLUDED.id_user_updated " \
+                          "WHERE (t.id_relation_type) IS DISTINCT FROM (EXCLUDED.id_relation_type); "
+            upsert_stmt = insert_stmt + on_conflict
+            #print(upsert_stmt)
+            cur = conn_pg.cursor()
+            #psycopg2.extras.execute_batch(cur, upsert_stmt, df.values)
+            psycopg2.extras.execute_values(cur, upsert_stmt, df.values,page_size=10000)
+            logger.debug("Relations inserted/updated successfully ")
+            conn_pg.commit()
+    except psycopg2.DatabaseError as error:
+            logger.debug('Failed to insert/update relations to database rollback:  %s' % error)
+            conn_pg.rollback()
+    finally:
+        if conn_pg is not None:
+            cur.close()
+            conn_pg.close()
+
+
 def batch_insert_new_terms(table,df):
     try:
         conn_pg=create_db_connection()
@@ -342,7 +374,7 @@ def batch_update_terms(df,columns_to_update,table,condition='id_term'):
 
 def get_related_semantic_uri(df):
     '''
-    INPUT - df1 - dataframe read from xml containing related_uri column
+    INPUT - df_from_nerc - dataframe read from xml containing related_uri column
     OUTPUT - dataframe containing semantic_uri corresponding to the uri's in the INPUT file
     '''
     df_subset=df[df.related_uri.apply(lambda x:len(x)!=0)]
@@ -382,55 +414,7 @@ def get_primary_keys(df_related,df_pang):
     df_related['related_terms']=related_id_terms
     
     return df_related
-    
-
-def terminology_updater(url_collection):
-    '''
-    Updates one terminology at a time, fills out term, term_relations tables
-    Parameters
-    ----------
-    terminology : TYPE:dictionary
-                  DESCRIPTION:{id _terminology,terminology_uri,id_user_created}
         
-    db_params(implicit,global) :   TYPE: dictionary
-                  DESCRIPTION:pangea db password, user name, db host and etc.
-    -------
-    Returns:  None
-    '''
-    
-    
-    # TERM_TABLE UPDATE/INSERT 
-    root_main=read_xml(url=url_collection)  # can read from local xml file or webpage 
-    df1=xml_parser(root_main)
-
-    # reading the 'term' table from  pangaea_db database
-    sql_command='SELECT * FROM public.term \
-        WHERE id_terminology=21'
-    df2=dataframe_from_database(sql_command)
-    df_insert,df_update=dataframe_difference(df1,df2)        #df_insert/df_update.shape=(n,7)!//df_insert,df_update can be None if df1 or df2 are empty
-    
-    # execute INSERT statement if df_insert is not empty
-    if df_insert is not None:
-        df_insert_shaped=df_shaper(df_insert)         # df_ins.shape=(n,17) ready to insert into SQL DB  
-        batch_insert_new_terms(table='term',df=df_insert_shaped)
-        
-    # execute UPDATE statement if df_update is not empty
-    if df_update is not None:
-        df_update_shaped=df_shaper(df_update,df_pang=df2)         # add default columns to the table (prepare to be updated to PANGAEA DB)
-        columns_to_update=['name','datetime_last_harvest','description','datetime_updated',
-                               'id_term_status','uri','semantic_uri','id_term']
-        batch_update_terms(df=df_update_shaped,columns_to_update=columns_to_update,
-                           table='term')
-        
-
-    # TERM_RELATION TABLE
-    df_related=get_related_semantic_uri(df1)
-    df_related_pk=get_primary_keys(df_related,df2)
-    # call shaper to get df into proper shape
-    df_related_shaped=related_df_shaper(df_related_pk)
-    # call batch import 
-    batch_insert_new_terms(table='term_relation',df=df_related_shaped)
-    
     
 def main():
    
@@ -443,9 +427,46 @@ def main():
     
     collection_names=['collection/'+collection['collection_name'] for collection in terminologies]
     
+    df_list=[]
     for terminology in terminologies:
-        terminology_updater(terminology['uri'])
+         root_main=read_xml(url=terminology['uri'])  # can read from local xml file or webpage 
+         df=xml_parser(root_main)
+         df_list.append(df)
+         
+    df_from_nerc=pd.concat(df_list,ignore_index=True)
     
+    
+    # reading the 'term' table from  pangaea_db database
+    sql_command='SELECT * FROM public.term \
+        WHERE id_terminology=21'
+    df_from_pangea=dataframe_from_database(sql_command)
+    df_insert,df_update=dataframe_difference(df_from_nerc,df_from_pangea)        #df_insert/df_update.shape=(n,7)!//df_insert,df_update can be None if df_from_nerc or df_from_pangea are empty
+    
+    # execute INSERT statement if df_insert is not empty
+    if df_insert is not None:
+        df_insert_shaped=df_shaper(df_insert)         # df_ins.shape=(n,17) ready to insert into SQL DB  
+        batch_insert_new_terms(table='term',df=df_insert_shaped)
+    else:
+        logger.debug('Inserting new NERC TERMS : SKIPPED')
+        
+    # execute UPDATE statement if df_update is not empty
+    if df_update is not None:
+        df_update_shaped=df_shaper(df_update,df_pang=df_from_pangea)         # add default columns to the table (prepare to be updated to PANGAEA DB)
+        columns_to_update=['name','datetime_last_harvest','description','datetime_updated',
+                               'id_term_status','uri','semantic_uri','id_term']
+        batch_update_terms(df=df_update_shaped,columns_to_update=columns_to_update,
+                           table='term')
+    else:
+        logger.debug('Updating new NERC TERMS : SKIPPED')
+        
+
+    # TERM_RELATION TABLE
+    df_related=get_related_semantic_uri(df_from_nerc)
+    df_related_pk=get_primary_keys(df_related,df_from_pangea)
+    # call shaper to get df into proper shape
+    df_related_shaped=related_df_shaper(df_related_pk)
+    # call batch import 
+    insert_update_relations(table='term_relation',df=df_related_shaped)
     
     
 if __name__=='__main__':
