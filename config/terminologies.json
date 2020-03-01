@@ -3,11 +3,13 @@
 
 	{
 	"collection_name":"L05",
-        "uri":"http://vocab.nerc.ac.uk/collection/L05/current/"
+        "uri":"http://vocab.nerc.ac.uk/collection/L05/current/",
+	"relation_types":["broader","related"]
     },
 
     {
 	"collection_name":"L22",
-        "uri":"http://vocab.nerc.ac.uk/collection/L22/current/"
+        "uri":"http://vocab.nerc.ac.uk/collection/L22/current/",
+	"relation_types":["broader"]
     }
 ]

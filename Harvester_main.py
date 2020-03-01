@@ -59,7 +59,7 @@ def read_xml(url=None,filename=None):
         return root_main
     
     
-def xml_parser(root_main):
+def xml_parser(root_main,relation_types):
     """
     Takes root(ET) of a Collection e.g. 'http://vocab.nerc.ac.uk/collection/L05/current/accepted/'
     Returns pandas DataFrame with harvested fields (e.g.semantic_uri,name,etc.) for every member of the collection
@@ -78,9 +78,12 @@ def xml_parser(root_main):
         D['id_term_status']=int(np.where(D['deprecated']=='false',3,1))               # important to have int intead of ndarray
         
         # RELATED TERMS
-        related=member.findall('.'+skos+'Concept'+skos+'related')
-        broader=member.findall('.'+skos+'Concept'+skos+'broader')
-        related_total=related+broader
+        related_total=[]
+        for r_type in relation_types:
+            r_type_elements=member.findall('.'+skos+'Concept'+skos+r_type)
+            if len(r_type_elements)!=0:
+                related_total.extend(r_type_elements)
+        
         related_uri_list=list()
         id_relation_type_list=list()
         
@@ -425,12 +428,12 @@ def main():
     terminologies=get_terminologies_params(fname=r'config\terminologies.json')
     db_params=get_db_params(config_file_name="config\import.ini")
     
-    collection_names=['collection/'+collection['collection_name'] for collection in terminologies]
+    collection_names=['collection/'+collection['collection_name'] for collection in terminologies] # for xml_parser
     
     df_list=[]
     for terminology in terminologies:
          root_main=read_xml(url=terminology['uri'])  # can read from local xml file or webpage 
-         df=xml_parser(root_main)
+         df=xml_parser(root_main,relation_types=terminology['relation_types'])
          df_list.append(df)
          
     df_from_nerc=pd.concat(df_list,ignore_index=True)
