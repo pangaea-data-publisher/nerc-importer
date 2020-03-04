@@ -109,36 +109,36 @@ def xml_parser(root_main,relation_types):
    
 
 # functions for creation of DB connection   -START    
-def get_db_params(config_file_name="config\import.ini"):
+def get_config_params(config_file_name="config\import.ini"):
     """
-    Sets up database connection from config file.
-    Input:
-    config_file_name: File containing PGHOST, PGUSER,
-                      PGPASSWORD, PGDATABASE, PGPORT, which are the
-                      credentials for the PostgreSQL database
-    """
+    Reads config file returns parameters of DB and collections(terminologies) to be imported/updated.
+      Input:
+      config_file_name: File containing PGHOST, PGUSER,
+                        PGPASSWORD, PGDATABASE, PGPORT, which are the
+                        credentials for the PostgreSQL database
+      terminologies: JSON string conatining parameteres of terminologies
+      """
+
     configParser=configparser.ConfigParser()
     configfile=config_file_name
     configfile_path=os.path.abspath(configfile)
     configParser.read(configfile_path)
-    params=dict()
     # READING INI FILE
-    params['user']=configParser.get('DB','pangaea_db_user')
-    params['pwd']=configParser.get('DB','pangaea_db_pwd')
-    params['db']=configParser.get('DB','pangaea_db_db')
-    params['host']=configParser.get('DB','pangaea_db_host')
-    params['port']=configParser.get('DB','pangaea_db_port')
+    #db params
+    db_params=dict()
+    db_params['user']=configParser.get('DB','pangaea_db_user')
+    db_params['pwd']=configParser.get('DB','pangaea_db_pwd')
+    db_params['db']=configParser.get('DB','pangaea_db_db')
+    db_params['host']=configParser.get('DB','pangaea_db_host')
+    db_params['port']=configParser.get('DB','pangaea_db_port')
+    #terminologies
+    terminologies_params=configParser.get('INPUT','terminologies')  # parameters for each terminology as JSON str
+    terminologies_params_parsed=json.loads(terminologies_params)
 
-    return params
+    return db_params,terminologies_params_parsed
     
-def get_terminologies_params(fname=r'config\terminologies.json'):
-    
-    with open(fname) as json_file:
-        term_data=json.load(json_file)
-        
-    return term_data
 
-def get_engine(db_params):
+def get_engine(db_credentials):
     """
     Get SQLalchemy engine using credentials.
     Input:
@@ -150,8 +150,8 @@ def get_engine(db_params):
     """
 
     url = 'postgresql://{user}:{passwd}@{host}:{port}/{db}'.format(
-        user=db_params['user'], passwd=db_params['pwd'], host=db_params['host'], 
-        port=db_params['port'], db=db_params['db'])
+        user=db_credentials['user'], passwd=db_credentials['pwd'], host=db_credentials['host'], 
+        port=db_credentials['port'], db=db_credentials['db'])
     engine = create_engine(url, pool_size = 50)
     
     return engine
@@ -159,8 +159,8 @@ def get_engine(db_params):
 
 def create_db_connection():
     try:
-        #  initial paramters from import.ini - db_params
-        engine=get_engine(db_params)   # gets engine using initial DB parameters 
+        #  initial paramters from import.ini - db_credentials
+        engine=get_engine(db_credentials)   # gets engine using initial DB parameters 
         con = engine.raw_connection() 
         logger.info("Connected to PostgreSQL database!")
     except IOError:
@@ -421,13 +421,10 @@ def get_primary_keys(df_related,df_pang):
     
 def main():
    
-    global db_params 
-    global collection_names # to look for relations in all mentioned collections (xml_parser)
-
-    # read the list of temonilogies from json file
-    terminologies=get_terminologies_params(fname=r'config\terminologies.json')
-    db_params=get_db_params(config_file_name="config\import.ini")
-    
+    global db_credentials # used in create_db_connection
+    global collection_names #  used in xml_parser
+    # get db and terminologies parameters from config file
+    db_credentials,terminologies=get_config_params(config_file_name="config\import.ini")  
     collection_names=['collection/'+collection['collection_name'] for collection in terminologies] # for xml_parser
     
     df_list=[]
@@ -437,7 +434,6 @@ def main():
          df_list.append(df)
          
     df_from_nerc=pd.concat(df_list,ignore_index=True)
-    
     
     # reading the 'term' table from  pangaea_db database
     sql_command='SELECT * FROM public.term \
@@ -462,7 +458,6 @@ def main():
     else:
         logger.debug('Updating new NERC TERMS : SKIPPED')
         
-
     # TERM_RELATION TABLE
     df_related=get_related_semantic_uri(df_from_nerc)
     df_related_pk=get_primary_keys(df_related,df_from_pangea)
