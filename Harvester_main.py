@@ -12,7 +12,7 @@ import logging
 from sqlalchemy import create_engine
 import datetime
 import json
-
+import argparse
 
 def initLog():
     # create logger 
@@ -109,7 +109,7 @@ def xml_parser(root_main,relation_types):
    
 
 # functions for creation of DB connection   -START    
-def get_config_params(config_file_name="config\import.ini"):
+def get_config_params(config_file_name):
     """
     Reads config file returns parameters of DB and collections(terminologies) to be imported/updated.
       Input:
@@ -118,11 +118,9 @@ def get_config_params(config_file_name="config\import.ini"):
                         credentials for the PostgreSQL database
       terminologies: JSON string conatining parameteres of terminologies
       """
-
+    
     configParser=configparser.ConfigParser()
-    configfile=config_file_name
-    configfile_path=os.path.abspath(configfile)
-    configParser.read(configfile_path)
+    configParser.read(config_file_name)
     # READING INI FILE
     #db params
     db_params=dict()
@@ -423,8 +421,12 @@ def main():
    
     global db_credentials # used in create_db_connection
     global collection_names #  used in xml_parser
+    ap = argparse.ArgumentParser()
+    ap.add_argument("-c", "--config", required=True, help="Path to import.ini config file")
+    args = ap.parse_args()
+    config_file_name=args.config  # abs path
     # get db and terminologies parameters from config file
-    db_credentials,terminologies=get_config_params(config_file_name="config\import.ini")  
+    db_credentials,terminologies=get_config_params(config_file_name)  
     collection_names=['collection/'+collection['collection_name'] for collection in terminologies] # for xml_parser
     
     df_list=[]
