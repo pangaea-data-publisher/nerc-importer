@@ -90,12 +90,16 @@ def xml_parser(root_main,relation_types):
         for element in related_total:
             related_uri=element.attrib['{http://www.w3.org/1999/02/22-rdf-syntax-ns#}resource']
             
-            if any(name in related_uri for name in collection_names):  # if related_uri contains one of the collections names (L05,L22,...)
+            if 'broader' in element.tag and any(name in related_uri for name in terminologies_names):  # if related_uri contains one of the collections names (L05,L22,...)
                 related_uri_list.append(related_uri)
-                if 'broader' in element.tag:
-                    id_relation_type_list.append(1)              # For broader, use relation type 1 (has broader term)
-                elif 'related' in element.tag:
-                    id_relation_type_list.append(7)    #For related, use relation type 7 (is related to)
+                id_relation_type_list.append(1) 
+            # if related to the collections previously not read (unique bidirectional relation)
+            elif 'related' in element.tag and any(name in related_uri for name in terminologies_left): 
+                related_uri_list.append(related_uri)
+                id_relation_type_list.append(7) 
+            
+                
+                
         
         D['related_uri']=related_uri_list
         D['id_relation_type']=id_relation_type_list
@@ -420,20 +424,30 @@ def get_primary_keys(df_related,df_pang):
 def main():
    
     global db_credentials # used in create_db_connection
-    global collection_names #  used in xml_parser
-    ap = argparse.ArgumentParser()
-    ap.add_argument("-c", "--config", required=True, help="Path to import.ini config file")
-    args = ap.parse_args()
-    config_file_name=args.config  # abs path
-    # get db and terminologies parameters from config file
+    global terminologies_names #  used in xml_parser
+    global terminologies_done #  List of termnilogies already read - used in xml_parser
+    global terminologies_left #  List of termnilogies which still have to be read - used in xml_parser
+    terminologies_done=list()
+    # ap = argparse.ArgumentParser()
+    # ap.add_argument("-c", "--config", required=True, help="Path to import.ini config file")
+    # args = ap.parse_args()
+    # config_file_name=args.config  # abs path
+    
+    config_file_name='E:/PYTHON_work_learn/Python_work/Anu_Project/HARVESTER/JAN_2020/CODE/nerc-importer-master/nerc-importer/config/import.ini'  # abs path
+    # get db and terminologies parameters from config file 
     db_credentials,terminologies=get_config_params(config_file_name)  
-    collection_names=['collection/'+collection['collection_name'] for collection in terminologies] # for xml_parser
+    terminologies_names=['collection/'+collection['collection_name'] for collection in terminologies] # for xml_parser
     
     df_list=[]
+    # terminology - dictionary containing terminology name, uri and relation_type
     for terminology in terminologies:
+         terminologies_left=[x for x in terminologies_names if x not in terminologies_done]
+         #
          root_main=read_xml(url=terminology['uri'])  # can read from local xml file or webpage 
          df=xml_parser(root_main,relation_types=terminology['relation_types'])
          df_list.append(df)
+         # 
+         terminologies_done.append('collection/'+terminology['collection_name'])
          
     df_from_nerc=pd.concat(df_list,ignore_index=True)
     
