@@ -1,6 +1,8 @@
 import pandas as pd
+import numpy as np
 import psycopg2
 from sqlalchemy import create_engine
+import datetime
 
 class SQLConnector(object):
     # functions creating connection to the Database
@@ -139,4 +141,171 @@ class SQLExecutor(SQLConnector):
                 cur.close()
                 conn_pg.close()
 
+
+
+class DframeManipulator(SQLConnector):
+    
+    
+        # Identify up-to-date records in df_from_nerc
+    def dataframe_difference(self,df_from_nerc,df_from_pangea):
+        """
+        df_from_nerc=dataframe 1 result of parsing XML
+        df_from_pangea=dataframe 2 read from postgreSQL database
+        returns df_insert,df_update:
+        df_update- to be updated  in SQL database
+        df_insert - to be inserted in SQL database
+        datetime_last_harvest is used to define whether the term is up to date or not
+        """
+        if len(df_from_nerc)!=0:  # nothing to insert or update if df_from_nerc is empty
+            not_in_database=[
+                            df_from_nerc.iloc[i]['semantic_uri'] 
+                            not in df_from_pangea['semantic_uri'].values 
+                            for i in range(len(df_from_nerc))
+                            ] 
+            df_from_nerc['action']= np.where(not_in_database ,'insert', '')   # if there are different elements we always have to insert them
+            df_insert=df_from_nerc[df_from_nerc['action']=='insert']
+            if len(df_insert)==0:
+                df_insert=None
+            ## update cond
+            if len(df_from_pangea)!=0:   # nothing to update if df_from_pangea(pangaea db) is empty
+                in_database=np.invert(not_in_database)
+                df_from_nerc_in_database=df_from_nerc[in_database]  
+                # create Timestamp lists with times of corresponding elements in df_from_nerc and df_from_pangea //corresponding elements chosen by semanntic_uri
+                df_from_nerc_in_database_T=[
+                                   df_from_nerc_in_database[df_from_nerc_in_database['semantic_uri']==s_uri]['datetime_last_harvest'].iloc[0] 
+                                   for s_uri in df_from_nerc_in_database['semantic_uri']
+                                   ]
+                df_from_pangea_T=[
+                       df_from_pangea[df_from_pangea['semantic_uri']==s_uri]['datetime_last_harvest'].iloc[0] 
+                       for s_uri in df_from_nerc_in_database['semantic_uri']
+                       ]
+                # create list of booleans (condition for outdated elements)
+                df_from_nerc_in_database_outdated=[df_from_nerc_in_database_T[i]>df_from_pangea_T[i] for i in range(len(df_from_nerc_in_database_T))]
+                df_from_nerc_in_database=df_from_nerc_in_database.assign(action= np.where(df_from_nerc_in_database_outdated ,'update', ''))
+                df_update=df_from_nerc_in_database[df_from_nerc_in_database['action']=='update']
+                if len(df_update)==0: # make sure not to return empty dataframes!  
+                     df_update=None
+            else:
+                df_update=None
+            
+            return df_insert,df_update
+        
+        else:
+            df_insert,df_update=None,None
+            
+            return df_insert,df_update         #df_insert/df_update.shape=(n,7) only 7 initial columns!
+    
+    
+    # create dataframe to be inserted or updated (from harvested values and default values)
+    def df_shaper(self,df,df_pang=None):
+        
+        # Chechk the last id_term in SQL db
+        
+        
+        if df_pang is not None:   # if UPDATE id_terms stay the same
+            uri_list=list(df.semantic_uri)  # list of sematic_uri's of the df_update dataframe
+            mask = df_pang.semantic_uri.apply(lambda x: x in uri_list )   # corresponding id_terms's from df_from_pangea (PANGAEA dataframe to be updated)
+            df=df.assign(id_term=df_pang[mask].id_term.values)
+        else: # if INSERT generate new id_term's 
+            con=self.create_db_connection()
+            cursor=con.cursor()
+            cursor.execute('SELECT MAX(id_term) FROM public.term')
+            max_id_term=int(cursor.fetchall()[0][0])
+            df=df.assign(id_term=list(range(1+max_id_term,len(df)+max_id_term+1)))
+            if con is not None:
+                con.close()
+        # assign deafult values to columns
+        
+        df=df.assign(abbreviation="")
+        df=df.assign(datetime_created=df.datetime_last_harvest) #   
+        df=df.assign(comment=None) ## convert it to NULL for SQL ?
+        df=df.assign(datetime_updated=pd.to_datetime(datetime.datetime.now())) # assign current time
+        df=df.assign(master=0)
+        df=df.assign(root=0)
+        df=df.assign(id_term_category=1)
+        df=df.assign(id_terminology=21)
+        df=df.assign(id_user_created=7)
+        df=df.assign(id_user_updated=7)
+        df=df[['id_term', 'abbreviation', 'name', 'comment', 'datetime_created',
+           'datetime_updated', 'description', 'master', 'root', 'semantic_uri',
+           'uri', 'id_term_category', 'id_term_status', 'id_terminology',
+           'id_user_created', 'id_user_updated', 'datetime_last_harvest']]
+    #    df.set_index('id_term', inplace=True)
+        
+        return df
+    
+    
+    def related_df_shaper(self,df):
+        """
+        INPUT==dataframe with primary id_term and related_terms, where every 
+        element of related_terms column is a list containing from 1 to n related id terms
+        OUTPUT==dataframe ready to be inserted into term_relation PANGEA table
+        """ 
+        id_related=list()
+        id_primary=list()
+        id_relation_type=list()
+        for id_term in df.id_term:
+            
+            related_id_list=df.loc[df.id_term==id_term,'related_terms'].values[0]
+            id_relation_type_list=df.loc[df.id_term==id_term,'id_relation_type'].values[0]
+            for i in range(len(related_id_list)):
+                id_related.append(related_id_list[i])
+                id_relation_type.append(id_relation_type_list[i])
+                id_primary.append(id_term)
+                
+        df_rs=pd.DataFrame({'id_term':id_primary,'id_term_related':id_related,'id_relation_type':id_relation_type})
+        now=pd.to_datetime(datetime.datetime.now())
+        df_rs=df_rs.assign(datetime_created=now)
+        df_rs=df_rs.assign(datetime_updated=now)
+        df_rs=df_rs.assign(id_user_created=7)
+        df_rs=df_rs.assign(id_user_updated=7)
+       
+        return df_rs
+
+    
+    def get_related_semantic_uri(self,df):
+        '''
+        INPUT - df_from_nerc - dataframe read from xml containing related_uri column
+        OUTPUT - dataframe containing semantic_uri corresponding to the uri's in the INPUT file
+        '''
+        df_subset=df[df.related_uri.apply(lambda x:len(x)!=0)]
+        related_s_uri=list()
+        for related_uri_list in df_subset.related_uri:
+            templist=list()
+            for related_uri in related_uri_list:
+                current_list=df.loc[df.uri==related_uri,'semantic_uri']
+                if len(current_list)!=0:
+                    templist.append(current_list.values[0])
+            
+            related_s_uri.append(templist)
+        df_subset=df_subset.assign(related_s_uri=related_s_uri)
+        mask=[len(i)!=0 for i in df_subset.related_s_uri]
+        
+        return df_subset[['semantic_uri','related_s_uri','id_relation_type']][mask]
+    
+    
+    def get_primary_keys(self,df_related,df_pang):
+        '''
+        INPUT - df_related dataframe with column of semantic_uri and 2nd column of related semantic uri
+        OUTPUT - dataframe with 2 additional columns - id_term's corresponding to the 2 columns in INPUT dataframe
+        '''
+        id_term_list=list()
+        for s_uri in list(df_related.semantic_uri):
+            id_term_list.append(df_pang.loc[df_pang.semantic_uri==s_uri,'id_term'].values[0])
+            
+        df_related=df_related.assign(id_term=id_term_list) # create id_term column conatining id_terms form df_pang corresponding to semantic_uri from df_related
+        
+        related_id_terms=list()
+        #create a column id_term_related 
+        for s_uri_list in df_related.related_s_uri:
+            templist=list()
+            for s_uri in s_uri_list:
+                templist.append(df_pang.loc[df_pang.semantic_uri==s_uri,'id_term'].values[0])
+            related_id_terms.append(templist)
+        df_related['related_terms']=related_id_terms
+        
+        return df_related
+    
+        
+    
 
