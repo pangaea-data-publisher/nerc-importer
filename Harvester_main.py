@@ -1,18 +1,13 @@
-# -*- coding: utf-8 -*-
 import requests
 import configparser
-from bs4 import BeautifulSoup
 from xml.etree import ElementTree as ET
 import pandas as pd
-import psycopg2
-import sys, os
 import numpy as np
-import pandas.io.sql as psql
 import logging
-from sqlalchemy import create_engine
 import datetime
 import json
 import argparse
+import sql_nerc
 
 def initLog():
     # create logger 
@@ -59,7 +54,7 @@ def read_xml(url=None,filename=None):
         return root_main
     
     
-def xml_parser(root_main,relation_types):
+def xml_parser(root_main,terminologies_left,relation_types):
     """
     Takes root(ET) of a Collection e.g. 'http://vocab.nerc.ac.uk/collection/L05/current/accepted/'
     Returns pandas DataFrame with harvested fields (e.g.semantic_uri,name,etc.) for every member of the collection
@@ -138,47 +133,7 @@ def get_config_params(config_file_name):
     terminologies_params_parsed=json.loads(terminologies_params)
 
     return db_params,terminologies_params_parsed
-    
-
-def get_engine(db_credentials):
-    """
-    Get SQLalchemy engine using credentials.
-    Input:
-    db: database name
-    user: Username
-    host: Hostname of the database server
-    port: Port number
-    passwd: Password for the database
-    """
-
-    url = 'postgresql://{user}:{passwd}@{host}:{port}/{db}'.format(
-        user=db_credentials['user'], passwd=db_credentials['pwd'], host=db_credentials['host'], 
-        port=db_credentials['port'], db=db_credentials['db'])
-    engine = create_engine(url, pool_size = 50)
-    
-    return engine
-
-
-def create_db_connection():
-    try:
-        #  initial paramters from import.ini - db_credentials
-        engine=get_engine(db_credentials)   # gets engine using initial DB parameters 
-        con = engine.raw_connection() 
-        logger.info("Connected to PostgreSQL database!")
-    except IOError:
-        logger.exception("Failed to get database connection!")
-        return None, 'fail'
-
-    return con
 # functions for creation of DB connection   -END
-
-
-def dataframe_from_database(sql_command):
-    con=create_db_connection()
-    df=pd.read_sql(sql_command,con)
-    if con is not None:
-            con.close()
-    return df
 
 
 # Identify up-to-date records in df_from_nerc
@@ -233,17 +188,15 @@ def dataframe_difference(df_from_nerc,df_from_pangea):
 
 
 # create dataframe to be inserted or updated (from harvested values and default values)
-def df_shaper(df,df_pang=None):
+def df_shaper(df,sqlExec,df_pang=None):
     
     # Chechk the last id_term in SQL db
-    
-    
     if df_pang is not None:   # if UPDATE id_terms stay the same
         uri_list=list(df.semantic_uri)  # list of sematic_uri's of the df_update dataframe
         mask = df_pang.semantic_uri.apply(lambda x: x in uri_list )   # corresponding id_terms's from df_from_pangea (PANGAEA dataframe to be updated)
         df=df.assign(id_term=df_pang[mask].id_term.values)
     else: # if INSERT generate new id_term's 
-        con=create_db_connection()
+        con=sqlExec.create_db_connection()
         cursor=con.cursor()
         cursor.execute('SELECT MAX(id_term) FROM public.term')
         max_id_term=int(cursor.fetchall()[0][0])
@@ -297,85 +250,7 @@ def related_df_shaper(df):
     df_rs=df_rs.assign(id_user_updated=7)
    
     return df_rs
-
-def insert_update_relations(table,df):
-    try:
-        conn_pg = create_db_connection()
-        conn_pg.autocommit = False
-        if len(df) > 0:
-            df_columns = list(df)
-            # create (col1,col2,...)
-            columns = ",".join(df_columns)
-            # create VALUES('%s', '%s",...) one '%s' per column
-            #values = "VALUES({})".format(",".join(["%s" for _ in df_columns]))
-            # create INSERT INTO table (columns) VALUES('%s',...)
-            insert_stmt = "INSERT INTO {} AS t ({}) VALUES %s ".format(table, columns)
-            on_conflict = "ON CONFLICT ON CONSTRAINT term_relation_id_term_id_term_related_key " \
-                          "DO UPDATE SET id_relation_type = EXCLUDED.id_relation_type , " \
-                          "datetime_updated = EXCLUDED.datetime_updated , id_user_updated = EXCLUDED.id_user_updated " \
-                          "WHERE (t.id_relation_type) IS DISTINCT FROM (EXCLUDED.id_relation_type); "
-            upsert_stmt = insert_stmt + on_conflict
-            #print(upsert_stmt)
-            cur = conn_pg.cursor()
-            #psycopg2.extras.execute_batch(cur, upsert_stmt, df.values)
-            psycopg2.extras.execute_values(cur, upsert_stmt, df.values,page_size=10000)
-            logger.debug("Relations inserted/updated successfully ")
-            conn_pg.commit()
-    except psycopg2.DatabaseError as error:
-            logger.debug('Failed to insert/update relations to database rollback:  %s' % error)
-            conn_pg.rollback()
-    finally:
-        if conn_pg is not None:
-            cur.close()
-            conn_pg.close()
-
-
-def batch_insert_new_terms(table,df):
-    try:
-        conn_pg=create_db_connection()
-        conn_pg.autocommit = False
-        list_of_tuples = [tuple(x) for x in df.values]
-        df_columns = list(df)      # names of columns 
-        columns = ",".join(df_columns)
-        # create VALUES('%s', '%s",...) one '%s' per column
-        values = "VALUES({})".format(",".join(["%s" for _ in df_columns]))
-        # create INSERT INTO table (columns) VALUES('%s',...)
-        insert_stmt = "INSERT INTO {} ({}) {}".format(table, columns, values)
-        cur = conn_pg.cursor()
-        psycopg2.extras.execute_batch(cur, insert_stmt, list_of_tuples)
-        logger.debug("batch_insert_new_terms - record inserted successfully ")
-        # Commit your changes
-        conn_pg.commit()
-    except psycopg2.DatabaseError as error:
-        logger.debug('Failed to insert records to database rollback: %s' % (error))
-        conn_pg.rollback()
-    finally:
-        if conn_pg is not None:
-            cur.close()
-            conn_pg.close()
-   
-def batch_update_terms(df,columns_to_update,table,condition='id_term'):
-        try:
-            conn_pg = create_db_connection()
-            conn_pg.autocommit = False
-            cur = conn_pg.cursor()
-            df=df[columns_to_update]
-            list_of_tuples = [tuple(x) for x in df.values]
-            values='=%s,'.join(columns_to_update[:-1])
-            update_stmt='UPDATE {table_name} SET {values}=%s where {condition}=%s'.format(
-                    table_name=table,values=values,condition='id_term')
-            psycopg2.extras.execute_batch(cur, update_stmt, list_of_tuples)
-            logger.debug("batch_update_vernacular_terms - record updated successfully ")
-            # Commit your changes
-            conn_pg.commit()
-        except psycopg2.DatabaseError as error:
-            logger.debug('Failed to update record to database rollback: %s' % error)
-            conn_pg.rollback()
-        finally:
-            if conn_pg is not None:
-                cur.close()
-                conn_pg.close()
-                
+              
 
 def get_related_semantic_uri(df):
     '''
@@ -423,10 +298,8 @@ def get_primary_keys(df_related,df_pang):
     
 def main():
    
-    global db_credentials # used in create_db_connection
     global terminologies_names #  used in xml_parser
-    global terminologies_done #  List of termnilogies already read - used in xml_parser
-    global terminologies_left #  List of termnilogies which still have to be read - used in xml_parser
+
     terminologies_done=list()
     # ap = argparse.ArgumentParser()
     # ap.add_argument("-c", "--config", required=True, help="Path to import.ini config file")
@@ -436,6 +309,10 @@ def main():
     config_file_name='E:/PYTHON_work_learn/Python_work/Anu_Project/HARVESTER/JAN_2020/CODE/nerc-importer-master/nerc-importer/config/import.ini'  # abs path
     # get db and terminologies parameters from config file 
     db_credentials,terminologies=get_config_params(config_file_name)  
+    
+     # create SQLexecutor object
+    sqlExec = sql_nerc.SQLExecutor(db_credentials)
+    sqlExec.setLogger(logger)
     terminologies_names=['collection/'+collection['collection_name'] for collection in terminologies] # for xml_parser
     
     df_list=[]
@@ -444,23 +321,23 @@ def main():
          terminologies_left=[x for x in terminologies_names if x not in terminologies_done]
          #
          root_main=read_xml(url=terminology['uri'])  # can read from local xml file or webpage 
-         df=xml_parser(root_main,relation_types=terminology['relation_types'])
+         df=xml_parser(root_main,terminologies_left,terminology['relation_types'])   
          df_list.append(df)
          # 
          terminologies_done.append('collection/'+terminology['collection_name'])
          
     df_from_nerc=pd.concat(df_list,ignore_index=True)
-    
     # reading the 'term' table from  pangaea_db database
     sql_command='SELECT * FROM public.term \
         WHERE id_terminology=21'
-    df_from_pangea=dataframe_from_database(sql_command)
+    
+    df_from_pangea=sqlExec.dataframe_from_database(sql_command)
     df_insert,df_update=dataframe_difference(df_from_nerc,df_from_pangea)        #df_insert/df_update.shape=(n,7)!//df_insert,df_update can be None if df_from_nerc or df_from_pangea are empty
     
     # execute INSERT statement if df_insert is not empty
     if df_insert is not None:
-        df_insert_shaped=df_shaper(df_insert)         # df_ins.shape=(n,17) ready to insert into SQL DB  
-        batch_insert_new_terms(table='term',df=df_insert_shaped)
+        df_insert_shaped=df_shaper(df_insert,sqlExec)         # df_ins.shape=(n,17) ready to insert into SQL DB  
+        sqlExec.batch_insert_new_terms(table='term',df=df_insert_shaped)
     else:
         logger.debug('Inserting new NERC TERMS : SKIPPED')
         
@@ -469,7 +346,7 @@ def main():
         df_update_shaped=df_shaper(df_update,df_pang=df_from_pangea)         # add default columns to the table (prepare to be updated to PANGAEA DB)
         columns_to_update=['name','datetime_last_harvest','description','datetime_updated',
                                'id_term_status','uri','semantic_uri','id_term']
-        batch_update_terms(df=df_update_shaped,columns_to_update=columns_to_update,
+        sqlExec.batch_update_terms(df=df_update_shaped,columns_to_update=columns_to_update,
                            table='term')
     else:
         logger.debug('Updating new NERC TERMS : SKIPPED')
@@ -480,7 +357,7 @@ def main():
     # call shaper to get df into proper shape
     df_related_shaped=related_df_shaper(df_related_pk)
     # call batch import 
-    insert_update_relations(table='term_relation',df=df_related_shaped)
+    sqlExec.insert_update_relations(table='term_relation',df=df_related_shaped)
     
     
 if __name__=='__main__':
