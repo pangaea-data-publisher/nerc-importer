@@ -199,9 +199,7 @@ class DframeManipulator(SQLConnector):
     # create dataframe to be inserted or updated (from harvested values and default values)
     def df_shaper(self,df,df_pang=None):
         
-        # Chechk the last id_term in SQL db
-        
-        
+        # Check the last id_term in SQL db
         if df_pang is not None:   # if UPDATE id_terms stay the same
             uri_list=list(df.semantic_uri)  # list of sematic_uri's of the df_update dataframe
             mask = df_pang.semantic_uri.apply(lambda x: x in uri_list )   # corresponding id_terms's from df_from_pangea (PANGAEA dataframe to be updated)
@@ -265,7 +263,7 @@ class DframeManipulator(SQLConnector):
     
     def get_related_semantic_uri(self,df):
         '''
-        INPUT - df_from_nerc - dataframe read from xml containing related_uri column
+        INPUT - df=df_from_nerc - dataframe read from xml containing related_uri column
         OUTPUT - dataframe containing semantic_uri corresponding to the uri's in the INPUT file
         '''
         df_subset=df[df.related_uri.apply(lambda x:len(x)!=0)]
@@ -279,6 +277,7 @@ class DframeManipulator(SQLConnector):
             
             related_s_uri.append(templist)
         df_subset=df_subset.assign(related_s_uri=related_s_uri)
+        # mask used to exclude the entries where there are no related semantic uris
         mask=[len(i)!=0 for i in df_subset.related_s_uri]
         
         return df_subset[['semantic_uri','related_s_uri','id_relation_type']][mask]
@@ -287,14 +286,23 @@ class DframeManipulator(SQLConnector):
     def get_primary_keys(self,df_related,df_pang):
         '''
         INPUT - df_related dataframe with column of semantic_uri and 2nd column of related semantic uri
+                - df_pang dataframe from public.term table, containing all 17 columns
         OUTPUT - dataframe with 2 additional columns - id_term's corresponding to the 2 columns in INPUT dataframe
         '''
         id_term_list=list()
         for s_uri in list(df_related.semantic_uri):
-            id_term_list.append(df_pang.loc[df_pang.semantic_uri==s_uri,'id_term'].values[0])
+            # take corresponding id_terms from SQL pangaea_db.term table
+            values_to_append=df_pang.loc[df_pang.semantic_uri == s_uri, 'id_term'].values
+            if len(values_to_append)!=0:
+                id_term_list.append(values_to_append[0])
+            else:
+                logger.debug('Warning! Could not get_primary_key for {} semantic_uri'.format(s_uri))
+        try:
+            df_related=df_related.assign(id_term=id_term_list) # create id_term column conatining id_terms form df_pang corresponding to semantic_uri from df_related
+        except ValueError as e:
+            logger.debug(e)
+            raise
             
-        df_related=df_related.assign(id_term=id_term_list) # create id_term column conatining id_terms form df_pang corresponding to semantic_uri from df_related
-        
         related_id_terms=list()
         #create a column id_term_related 
         for s_uri_list in df_related.related_s_uri:
