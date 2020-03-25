@@ -74,15 +74,14 @@ def read_xml(collection_name, url=None):
     except requests.exceptions.RequestException as e:
         logger.debug(e)  # instead of printing message to the console
         return None
-
-        # write it to logger instead?
     # now try parsing the content of XML file using ET
     try:
         root_main = ET.fromstring(xml_content)
     except (ET.ParseError, UnboundLocalError) as e:
         logger.debug(e)
         return None
-    logger.debug('xml is read properly')
+    finally:
+        logger.debug('xml of {} collection is read properly'.format(collection_name))
 
     return root_main
 
@@ -209,8 +208,7 @@ def main():
     # config_file_name=args.config  # abs path
 
     config_file_name = 'E:/PYTHON_work_learn/Python_work/Anu_Project/HARVESTER/JAN_2020/CODE/nerc-importer-master/nerc-importer/config/import.ini'  # abs path
-    db_credentials, terminologies = get_config_params(
-        config_file_name)  # get db and terminologies parameters from config file
+    db_credentials, terminologies = get_config_params(config_file_name)  # get db and terminologies parameters from config file
 
     # create SQLexecutor object
     sqlExec = sql_nerc.SQLExecutor(db_credentials)
@@ -220,22 +218,34 @@ def main():
     # DFManipulator.setLogger(logger) not currently used there
 
     terminologies_names = [collection['collection_name'] for collection in terminologies]  # for xml_parser
-
+    id_terminologies_SQL=sqlExec.get_id_terminologies()
     df_list = []
     # terminology - dictionary containing terminology name, uri and relation_type
     for terminology in terminologies:
-        terminologies_left = [x for x in terminologies_names if x not in terminologies_done]
+        if int(terminology['id_terminology']) in id_terminologies_SQL:
 
-        root_main = read_xml(url=terminology['uri'], collection_name=terminology['collection_name'])
-        df = xml_parser(root_main, terminologies_left, terminology['relation_types'])
-        df_list.append(df)
+            terminologies_left = [x for x in terminologies_names if x not in terminologies_done]
+            root_main = read_xml(url=terminology['uri'], collection_name=terminology['collection_name'])
+            df = xml_parser(root_main, terminologies_left, terminology['relation_types'])
+            # lets assign the id_terminology (e.g. 21 or 22) chosen in .ini file for every terminology
+            df = df.assign(id_terminology=terminology['id_terminology'])
+            df_list.append(df)
+            del df  # to free memory
+            terminologies_done.append(terminology['collection_name'])
 
-        terminologies_done.append(terminology['collection_name'])
+        else:
+            logger.debug('No corresponding id_terminology in SQL database,'
+                         ' terminology {} skipped'.format(terminology['collection_name']))
 
     df_from_nerc = pd.concat(df_list, ignore_index=True)
+    del df_list  # to free memory
     # reading the 'term' table from  pangaea_db database
+    used_id_terms=[terminology['id_terminology'] for terminology in terminologies ]
+    used_id_terms_unique=set(used_id_terms)
     sql_command = 'SELECT * FROM public.term \
-        WHERE id_terminology=21'
+        WHERE id_terminology in ({})'\
+        .format(",".join([str(_) for _ in used_id_terms_unique]))
+    # took care of the fact that there are different id terminologies e.g. 21 or 22
 
     df_from_pangea = sqlExec.dataframe_from_database(sql_command)
     df_insert, df_update = DFManipulator.dataframe_difference(df_from_nerc, df_from_pangea)

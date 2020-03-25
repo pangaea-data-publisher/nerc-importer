@@ -51,17 +51,35 @@ class SQLConnector(object):
     
 
 class SQLExecutor(SQLConnector):
-    # all the functions using create_db_connection
+    # in this class are all the functions the main purpose of which is
+    # interaction with SQL database
     
-    
+    def get_id_terminologies(self):
+        con = self.create_db_connection()
+        cursor = con.cursor()
+        sql_command = 'SELECT id_terminology FROM public.terminology '
+        try:
+            cursor.execute(sql_command)
+            fetched_items = cursor.fetchall()
+            id_terminologies =[item[0] for item in fetched_items]
+        except psycopg2.DatabaseError as error:
+            logger.debug(error)
+        finally:
+            if con is not None:
+                cursor.close()
+                con.close()
+
+        return id_terminologies
+
+
     def dataframe_from_database(self,sql_command):
         con=self.create_db_connection()
         df=pd.read_sql(sql_command,con)
         if con is not None:
                 con.close()
         return df
-    
-    
+
+
     def batch_insert_new_terms(self,table,df):
         try:
             conn_pg=self.create_db_connection()
@@ -157,9 +175,10 @@ class DframeManipulator(SQLConnector):
         datetime_last_harvest is used to define whether the term is up to date or not
         """
         if len(df_from_nerc)!=0:  # nothing to insert or update if df_from_nerc is empty
+            s_uris=df_from_pangea['semantic_uri'].values
             not_in_database=[
                             df_from_nerc.iloc[i]['semantic_uri'] 
-                            not in df_from_pangea['semantic_uri'].values 
+                            not in s_uris
                             for i in range(len(df_from_nerc))
                             ] 
             df_from_nerc['action']= np.where(not_in_database ,'insert', '')   # if there are different elements we always have to insert them
@@ -171,10 +190,8 @@ class DframeManipulator(SQLConnector):
                 in_database=np.invert(not_in_database)
                 df_from_nerc_in_database=df_from_nerc[in_database]  
                 # create Timestamp lists with times of corresponding elements in df_from_nerc and df_from_pangea //corresponding elements chosen by semanntic_uri
-                df_from_nerc_in_database_T=[
-                                   df_from_nerc_in_database[df_from_nerc_in_database['semantic_uri']==s_uri]['datetime_last_harvest'].iloc[0] 
-                                   for s_uri in df_from_nerc_in_database['semantic_uri']
-                                   ]
+                # TODO: here is a bottleneck! Decrease execution time!
+                df_from_nerc_in_database_T=df_from_nerc_in_database['datetime_last_harvest']
                 df_from_pangea_T=[
                        df_from_pangea[df_from_pangea['semantic_uri']==s_uri]['datetime_last_harvest'].iloc[0] 
                        for s_uri in df_from_nerc_in_database['semantic_uri']
@@ -211,6 +228,7 @@ class DframeManipulator(SQLConnector):
             max_id_term=int(cursor.fetchall()[0][0])
             df=df.assign(id_term=list(range(1+max_id_term,len(df)+max_id_term+1)))
             if con is not None:
+                cursor.close()
                 con.close()
         # assign deafult values to columns
         
@@ -221,7 +239,6 @@ class DframeManipulator(SQLConnector):
         df=df.assign(master=0)
         df=df.assign(root=0)
         df=df.assign(id_term_category=1)
-        df=df.assign(id_terminology=21)
         df=df.assign(id_user_created=7)
         df=df.assign(id_user_updated=7)
         df=df[['id_term', 'abbreviation', 'name', 'comment', 'datetime_created',
