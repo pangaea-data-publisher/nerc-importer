@@ -175,7 +175,7 @@ class DframeManipulator(SQLConnector):
         datetime_last_harvest is used to define whether the term is up to date or not
         """
         if len(df_from_nerc)!=0:  # nothing to insert or update if df_from_nerc is empty
-            s_uris=df_from_pangea['semantic_uri'].values
+            s_uris=df_from_pangea['semantic_uri'].values 
             not_in_database=[
                             df_from_nerc.iloc[i]['semantic_uri'] 
                             not in s_uris
@@ -190,17 +190,15 @@ class DframeManipulator(SQLConnector):
                 in_database=np.invert(not_in_database)
                 df_from_nerc_in_database=df_from_nerc[in_database]  
                 # create Timestamp lists with times of corresponding elements in df_from_nerc and df_from_pangea //corresponding elements chosen by semanntic_uri
-                # TODO: here is a bottleneck! Decrease execution time!
-                df_from_nerc_in_database_T=df_from_nerc_in_database['datetime_last_harvest']
-                df_from_pangea_T=[
-                       df_from_pangea[df_from_pangea['semantic_uri']==s_uri]['datetime_last_harvest'].iloc[0] 
-                       for s_uri in df_from_nerc_in_database['semantic_uri']
-                       ]
+                df_from_nerc_in_database_T=df_from_nerc_in_database['datetime_last_harvest'].values
+                df_from_pangea=df_from_pangea.set_index('semantic_uri')
+                df_from_pangea_sorted=df_from_pangea.reindex(index=df_from_nerc_in_database['semantic_uri'])
+                df_from_pangea_T=df_from_pangea_sorted['datetime_last_harvest'].values
                 # create list of booleans (condition for outdated elements)
-                df_from_nerc_in_database_outdated=[df_from_nerc_in_database_T[i]>df_from_pangea_T[i] for i in range(len(df_from_nerc_in_database_T))]
+                df_from_nerc_in_database_outdated=df_from_nerc_in_database_T>df_from_pangea_T
                 df_from_nerc_in_database=df_from_nerc_in_database.assign(action= np.where(df_from_nerc_in_database_outdated ,'update', ''))
                 df_update=df_from_nerc_in_database[df_from_nerc_in_database['action']=='update']
-                if len(df_update)==0: # make sure not to return empty dataframes!  
+                if len(df_update)==0: # make sure not to return empty dataframes!
                      df_update=None
             else:
                 df_update=None

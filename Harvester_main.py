@@ -272,7 +272,8 @@ def main():
     ''' TERM_RELATION TABLE'''
 
     sql_command = 'SELECT * FROM public.term \
-            WHERE id_terminology=21'
+            WHERE id_terminology in ({})'\
+        .format(",".join([str(_) for _ in used_id_terms_unique]))
     # need the current version of pangaea_db.term table
     # because it could change after insertion and update terms
     df_pangaea_for_relation = sqlExec.dataframe_from_database(sql_command)
