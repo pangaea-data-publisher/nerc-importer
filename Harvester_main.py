@@ -32,12 +32,14 @@ def initLog():
     return logger
 
 
-def read_xml(collection_name, url=None):
+def read_xml(terminology, config_file_name):
     '''
     can read from local xml file or webpage
     IN: xml from local file or webpage
     OUT: ET root object
     '''
+    url = terminology['uri']
+    collection_name = terminology['collection_name']
     try:
         head = requests.head(url)
         if head.headers['Content-Type'] == 'application/rdf+xml':
@@ -47,7 +49,12 @@ def read_xml(collection_name, url=None):
             xml_content = None
             while xml_content is None:
                 downloaded_files = os.listdir(os.getcwd() + local_folder)
-                if filename in downloaded_files:
+                config_ETag = read_config_ETag(config_file_name, collection_name)
+                # config_ETag=None if there is no corresponding ETag entry in .ini file
+                if config_ETag is not None \
+                        and filename in downloaded_files \
+                        and config_ETag == head.headers['ETag']:
+                    # if file was ever downloaded and is up-to-date
                     # read previously downloaded file from folder
                     try:
                         with open(file_abs_path, 'rb') as f:
@@ -60,6 +67,11 @@ def read_xml(collection_name, url=None):
                     req_main = requests.get(url)
                     with open(file_abs_path, 'wb') as f:
                         f.write(req_main.content)
+                    # write down the corresponding ETag of a collection into .ini file
+                    header_ETag = head.headers['ETag']
+                    add_config_ETag(config_file_name, collection_name, header_ETag)
+
+
         elif head.headers['Content-Type'] == 'text/xml;charset=UTF-8':
             # read xml response of NERC webpage
             try:
@@ -167,6 +179,64 @@ def xml_parser(root_main, terminologies_left, relation_types):
     return df
 
 
+def read_config_ETag(config_fname, coll_name):
+    """
+    reads ETag from INPUT section of config.ini file
+    normally an ETag string would be returned
+    If NoNe is returned - the value of ETag was not read properly or
+    ETag of a collection do not exist in .ini file
+    """
+    configParser = configparser.ConfigParser()
+    configParser.read(config_fname)
+    http_headers = configParser.get('INPUT', 'http_headers_ETag')
+    try:
+        # try parsing as a JSON string
+        http_headers_parsed = json.loads(http_headers)
+    except json.decoder.JSONDecodeError as e:  # e.g. if http_headers_parsed=''
+        http_headers_parsed = None
+    if http_headers_parsed is not None:
+        # if JSON string was parsed properly
+        # try accessing resulting dictionary
+        try:
+            ETag_from_config = http_headers_parsed[coll_name]
+        except KeyError:
+            ETag_from_config = None
+    else:
+        ETag_from_config = None
+
+    return ETag_from_config
+
+
+def add_config_ETag(config_fname, coll_name, header_ETag):
+    """
+    First tries to read existing ETag entries then
+    adds an ETag of a current collection.
+    Writes the dictionary as a JSON string into .ini file
+    """
+    configParser = configparser.ConfigParser()
+    configParser.read(config_fname)
+    http_headers = configParser.get('INPUT', 'http_headers_ETag')
+    try:
+        # try parsing as a JSON string
+        http_headers_parsed = json.loads(http_headers)
+    except json.decoder.JSONDecodeError as e:  # e.g. if http_headers_parsed=''
+        http_headers_parsed = None
+    if http_headers_parsed is not None:
+        # if JSON string was parsed properly
+        # try accessing resulting dictionary and adding new entry
+        http_headers_parsed[coll_name] = header_ETag
+        content = http_headers_parsed
+    else:
+        # if JSON string was empty and there are no previous entries
+        # create new dictionary with only one entry
+        ETag_packed = {coll_name: header_ETag}
+        content = json.dumps(ETag_packed)
+
+    configParser.set('INPUT', 'http_headers_ETag', content)
+    with open(config_fname, 'w') as file:
+        configParser.write(file)
+
+
 # functions for creation of DB connection   -START    
 def get_config_params(config_file_name):
     """
@@ -208,7 +278,8 @@ def main():
     # config_file_name=args.config  # abs path
 
     config_file_name = 'E:/PYTHON_work_learn/Python_work/Anu_Project/HARVESTER/JAN_2020/CODE/nerc-importer-master/nerc-importer/config/import.ini'  # abs path
-    db_credentials, terminologies = get_config_params(config_file_name)  # get db and terminologies parameters from config file
+    db_credentials, terminologies = get_config_params(config_file_name)
+    # get db and terminologies parameters from config file
 
     # create SQLexecutor object
     sqlExec = sql_nerc.SQLExecutor(db_credentials)
@@ -218,14 +289,14 @@ def main():
     # DFManipulator.setLogger(logger) not currently used there
 
     terminologies_names = [collection['collection_name'] for collection in terminologies]  # for xml_parser
-    id_terminologies_SQL=sqlExec.get_id_terminologies()
+    id_terminologies_SQL = sqlExec.get_id_terminologies()
     df_list = []
     # terminology - dictionary containing terminology name, uri and relation_type
     for terminology in terminologies:
         if int(terminology['id_terminology']) in id_terminologies_SQL:
 
             terminologies_left = [x for x in terminologies_names if x not in terminologies_done]
-            root_main = read_xml(url=terminology['uri'], collection_name=terminology['collection_name'])
+            root_main = read_xml(terminology, config_file_name)
             df = xml_parser(root_main, terminologies_left, terminology['relation_types'])
             # lets assign the id_terminology (e.g. 21 or 22) chosen in .ini file for every terminology
             df = df.assign(id_terminology=terminology['id_terminology'])
@@ -240,10 +311,10 @@ def main():
     df_from_nerc = pd.concat(df_list, ignore_index=True)
     del df_list  # to free memory
     # reading the 'term' table from  pangaea_db database
-    used_id_terms=[terminology['id_terminology'] for terminology in terminologies ]
-    used_id_terms_unique=set(used_id_terms)
+    used_id_terms = [terminology['id_terminology'] for terminology in terminologies]
+    used_id_terms_unique = set(used_id_terms)
     sql_command = 'SELECT * FROM public.term \
-        WHERE id_terminology in ({})'\
+        WHERE id_terminology in ({})' \
         .format(",".join([str(_) for _ in used_id_terms_unique]))
     # took care of the fact that there are different id terminologies e.g. 21 or 22
 
@@ -272,7 +343,7 @@ def main():
     ''' TERM_RELATION TABLE'''
 
     sql_command = 'SELECT * FROM public.term \
-            WHERE id_terminology in ({})'\
+            WHERE id_terminology in ({})' \
         .format(",".join([str(_) for _ in used_id_terms_unique]))
     # need the current version of pangaea_db.term table
     # because it could change after insertion and update terms
