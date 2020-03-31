@@ -225,7 +225,7 @@ def add_config_ETag(config_fname, coll_name, header_ETag):
         # if JSON string was parsed properly
         # try accessing resulting dictionary and adding new entry
         http_headers_parsed[coll_name] = header_ETag
-        content = http_headers_parsed
+        content = json.dumps(http_headers_parsed)
     else:
         # if JSON string was empty and there are no previous entries
         # create new dictionary with only one entry
