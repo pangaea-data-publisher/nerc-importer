@@ -106,7 +106,7 @@ class SQLExecutor(SQLConnector):
             update_stmt='UPDATE {table_name} SET {values}=%s where {condition}=%s'.format(
                     table_name=table,values=values,condition='id_term')
             psycopg2.extras.execute_batch(cur, update_stmt, list_of_tuples)
-            self.logger.debug("batch_update_vernacular_terms - record updated successfully ")
+            self.logger.debug("batch_update_terms - record updated successfully ")
             # Commit your changes
             conn_pg.commit()
         except psycopg2.DatabaseError as error:
