@@ -3,20 +3,15 @@ import numpy as np
 import psycopg2
 from sqlalchemy import create_engine
 import datetime
+import logging
 
 class SQLConnector(object):
     # functions creating connection to the Database
-    
     def __init__(self,db_cred):
         global db_credentials
-        db_credentials=db_cred
-        
-  
-    def setLogger(self, lg):
-        global logger
-        logger = lg
+        db_credentials = db_cred
+        self.logger= logging.getLogger(__name__)
 
-        
     def get_engine(self):
         """
         Get SQLalchemy engine using credentials.
@@ -27,33 +22,28 @@ class SQLConnector(object):
         port: Port number
         passwd: Password for the database
         """
-    
         url = 'postgresql://{user}:{passwd}@{host}:{port}/{db}'.format(
-            user=db_credentials['user'], passwd=db_credentials['pwd'], host=db_credentials['host'], 
+            user=db_credentials['user'], passwd=db_credentials['pwd'], host=db_credentials['host'],
             port=db_credentials['port'], db=db_credentials['db'])
         engine = create_engine(url, pool_size = 50)
-        
         return engine
-
 
     def create_db_connection(self):
         try:
             #  initial paramters from import.ini - db_credentials
-            engine=self.get_engine()   # gets engine using initial DB parameters 
-            con = engine.raw_connection() 
-            logger.info("Connected to PostgreSQL database!")
+            engine=self.get_engine()   # gets engine using initial DB parameters
+            con = engine.raw_connection()
+            #self.logger.info("Connected to PostgreSQL database!")
         except IOError:
-            logger.exception("Failed to get database connection!")
+            self.logger.exception("Failed to get database connection!")
             return None, 'fail'
-    
         return con
-    
-    
 
 class SQLExecutor(SQLConnector):
+
     # in this class are all the functions the main purpose of which is
     # interaction with SQL database
-    
+    # Create or get the logger
     def get_id_terminologies(self):
         con = self.create_db_connection()
         cursor = con.cursor()
@@ -63,7 +53,7 @@ class SQLExecutor(SQLConnector):
             fetched_items = cursor.fetchall()
             id_terminologies =[item[0] for item in fetched_items]
         except psycopg2.DatabaseError as error:
-            logger.debug(error)
+            self.logger.debug(error)
         finally:
             if con is not None:
                 cursor.close()
@@ -93,11 +83,11 @@ class SQLExecutor(SQLConnector):
             insert_stmt = "INSERT INTO {} ({}) {}".format(table, columns, values)
             cur = conn_pg.cursor()
             psycopg2.extras.execute_batch(cur, insert_stmt, list_of_tuples)
-            logger.debug("batch_insert_new_terms - record inserted successfully ")
+            self.logger.debug("batch_insert_new_terms - record inserted successfully ")
             # Commit your changes
             conn_pg.commit()
         except psycopg2.DatabaseError as error:
-            logger.debug('Failed to insert records to database rollback: %s' % (error))
+            self.logger.debug('Failed to insert records to database rollback: %s' % (error))
             conn_pg.rollback()
         finally:
             if conn_pg is not None:
@@ -116,11 +106,11 @@ class SQLExecutor(SQLConnector):
             update_stmt='UPDATE {table_name} SET {values}=%s where {condition}=%s'.format(
                     table_name=table,values=values,condition='id_term')
             psycopg2.extras.execute_batch(cur, update_stmt, list_of_tuples)
-            logger.debug("batch_update_vernacular_terms - record updated successfully ")
+            self.logger.debug("batch_update_vernacular_terms - record updated successfully ")
             # Commit your changes
             conn_pg.commit()
         except psycopg2.DatabaseError as error:
-            logger.debug('Failed to update record to database rollback: %s' % error)
+            self.logger.warning('Failed to update record to database rollback: %s' % error)
             conn_pg.rollback()
         finally:
             if conn_pg is not None:
@@ -145,14 +135,13 @@ class SQLExecutor(SQLConnector):
                               "datetime_updated = EXCLUDED.datetime_updated , id_user_updated = EXCLUDED.id_user_updated " \
                               "WHERE (t.id_relation_type) IS DISTINCT FROM (EXCLUDED.id_relation_type); "
                 upsert_stmt = insert_stmt + on_conflict
-                #print(upsert_stmt)
                 cur = conn_pg.cursor()
                 #psycopg2.extras.execute_batch(cur, upsert_stmt, df.values)
                 psycopg2.extras.execute_values(cur, upsert_stmt, df.values,page_size=10000)
-                logger.debug("Relations inserted/updated successfully ")
+                self.logger.debug("Relations inserted/updated successfully ")
                 conn_pg.commit()
         except psycopg2.DatabaseError as error:
-                logger.debug('Failed to insert/update relations to database rollback:  %s' % error)
+                self.logger.warning('Failed to insert/update relations to database rollback:  %s' % error)
                 conn_pg.rollback()
         finally:
             if conn_pg is not None:
@@ -160,10 +149,8 @@ class SQLExecutor(SQLConnector):
                 conn_pg.close()
 
 
-
 class DframeManipulator(SQLConnector):
-    
-    
+
         # Identify up-to-date records in df_from_nerc
     def dataframe_difference(self,df_from_nerc,df_from_pangea):
         """
@@ -175,19 +162,19 @@ class DframeManipulator(SQLConnector):
         datetime_last_harvest is used to define whether the term is up to date or not
         """
         if len(df_from_nerc)!=0:  # nothing to insert or update if df_from_nerc is empty
-            s_uris=df_from_pangea['semantic_uri'].values 
+            s_uris=list(df_from_pangea['semantic_uri'].values)
             not_in_database=[
                             df_from_nerc.iloc[i]['semantic_uri'] 
                             not in s_uris
                             for i in range(len(df_from_nerc))
-                            ] 
+                            ]
             df_from_nerc['action']= np.where(not_in_database ,'insert', '')   # if there are different elements we always have to insert them
             df_insert=df_from_nerc[df_from_nerc['action']=='insert']
             if len(df_insert)==0:
                 df_insert=None
             ## update cond
             if len(df_from_pangea)!=0:   # nothing to update if df_from_pangea(pangaea db) is empty
-                in_database=np.invert(not_in_database)
+                in_database=np.invert(not_in_database) # comment out by ASD
                 df_from_nerc_in_database=df_from_nerc[in_database]  
                 # create Timestamp lists with times of corresponding elements in df_from_nerc and df_from_pangea //corresponding elements chosen by semanntic_uri
                 df_from_nerc_in_database_T=df_from_nerc_in_database['datetime_last_harvest'].values
@@ -212,8 +199,7 @@ class DframeManipulator(SQLConnector):
     
     
     # create dataframe to be inserted or updated (from harvested values and default values)
-    def df_shaper(self,df,df_pang=None):
-        
+    def df_shaper(self,df,id_term_category,id_user_created,id_user_updated, df_pang=None):
         # Check the last id_term in SQL db
         if df_pang is not None:   # if UPDATE id_terms stay the same
             uri_list=list(df.semantic_uri)  # list of sematic_uri's of the df_update dataframe
@@ -230,25 +216,29 @@ class DframeManipulator(SQLConnector):
                 con.close()
         # assign deafult values to columns
         
-        df=df.assign(abbreviation="")
+        #df=df.assign(abbreviation="")
         df=df.assign(datetime_created=df.datetime_last_harvest) #   
         df=df.assign(comment=None) ## convert it to NULL for SQL ?
         df=df.assign(datetime_updated=pd.to_datetime(datetime.datetime.now())) # assign current time
-        df=df.assign(master=0)
-        df=df.assign(root=0)
-        df=df.assign(id_term_category=1)
-        df=df.assign(id_user_created=7)
-        df=df.assign(id_user_updated=7)
-        df=df[['id_term', 'abbreviation', 'name', 'comment', 'datetime_created',
-           'datetime_updated', 'description', 'master', 'root', 'semantic_uri',
-           'uri', 'id_term_category', 'id_term_status', 'id_terminology',
-           'id_user_created', 'id_user_updated', 'datetime_last_harvest']]
+        #df=df.assign(master=0)
+        #df=df.assign(root=0)
+        df=df.assign(id_term_category=id_term_category)
+        df=df.assign(id_user_created=id_user_created)
+        df=df.assign(id_user_updated=id_user_updated)
+        # df=df[['id_term', 'abbreviation', 'name', 'comment', 'datetime_created',
+        #    'datetime_updated', 'description', 'master', 'root', 'semantic_uri',
+        #    'uri', 'id_term_category', 'id_term_status', 'id_terminology',
+        #    'id_user_created', 'id_user_updated', 'datetime_last_harvest']]
+        df = df[['id_term','name', 'comment', 'datetime_created',
+                 'datetime_updated', 'description', 'semantic_uri',
+                 'uri', 'id_term_category', 'id_term_status', 'id_terminology',
+                 'id_user_created', 'id_user_updated', 'datetime_last_harvest']]
     #    df.set_index('id_term', inplace=True)
         
         return df
     
     
-    def related_df_shaper(self,df):
+    def related_df_shaper(self,df, id_user_created_updated):
         """
         INPUT==dataframe with primary id_term and related_terms, where every 
         element of related_terms column is a list containing from 1 to n related id terms
@@ -258,7 +248,6 @@ class DframeManipulator(SQLConnector):
         id_primary=list()
         id_relation_type=list()
         for id_term in df.id_term:
-            
             related_id_list=df.loc[df.id_term==id_term,'related_terms'].values[0]
             id_relation_type_list=df.loc[df.id_term==id_term,'id_relation_type'].values[0]
             for i in range(len(related_id_list)):
@@ -270,8 +259,8 @@ class DframeManipulator(SQLConnector):
         now=pd.to_datetime(datetime.datetime.now())
         df_rs=df_rs.assign(datetime_created=now)
         df_rs=df_rs.assign(datetime_updated=now)
-        df_rs=df_rs.assign(id_user_created=7)
-        df_rs=df_rs.assign(id_user_updated=7)
+        df_rs=df_rs.assign(id_user_created=id_user_created_updated)
+        df_rs=df_rs.assign(id_user_updated=id_user_created_updated)
        
         return df_rs
 
@@ -311,11 +300,11 @@ class DframeManipulator(SQLConnector):
             if len(values_to_append)!=0:
                 id_term_list.append(values_to_append[0])
             else:
-                logger.debug('Warning! Could not get_primary_key for {} semantic_uri'.format(s_uri))
+                self.logger.debug('Warning! Could not get_primary_key for {} semantic_uri'.format(s_uri))
         try:
             df_related=df_related.assign(id_term=id_term_list) # create id_term column conatining id_terms form df_pang corresponding to semantic_uri from df_related
         except ValueError as e:
-            logger.debug(e)
+            self.logger.debug(e)
             raise
             
         related_id_terms=list()

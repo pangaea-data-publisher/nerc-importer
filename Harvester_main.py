@@ -1,38 +1,19 @@
+import argparse
+
 import requests
 import configparser
 from xml.etree import ElementTree as ET
 import pandas as pd
 import numpy as np
-import logging
+import logging.config
 import datetime
 import json
 import os
-import argparse
 import sql_nerc
+import configparser as ConfigParser
+#from requests.adapters import HTTPAdapter
 
-
-def initLog():
-    # create logger 
-    logger = logging.getLogger(__name__)
-    logger.setLevel(logging.DEBUG)
-    # create file handler which logs even debug messages
-    fh = logging.FileHandler('loggerfile.log')  # ??? do we need absolute path here?
-    fh.setLevel(logging.DEBUG)
-    # create console handler with a higher log level
-    ch = logging.StreamHandler()
-    ch.setLevel(logging.ERROR)  # only the error messages will be shown in consoles
-    # create formatter and add it to the handlers
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    fh.setFormatter(formatter)
-    ch.setFormatter(formatter)
-    # add the handlers to the logger
-    logger.addHandler(fh)
-    logger.addHandler(ch)
-
-    return logger
-
-
-def read_xml(terminology, config_file_name):
+def read_xml(terminology):
     '''
     can read from local xml file or webpage
     IN: xml from local file or webpage
@@ -50,6 +31,7 @@ def read_xml(terminology, config_file_name):
             while xml_content is None:
                 downloaded_files = os.listdir(os.getcwd() + local_folder)
                 config_ETag = read_config_ETag(config_file_name, collection_name)
+                #print('config_ETag: ',config_ETag) #"44b8821-5a21dd48a4b14;5a21dd496ed93"
                 # config_ETag=None if there is no corresponding ETag entry in .ini file
                 if config_ETag is not None \
                         and filename in downloaded_files \
@@ -71,11 +53,13 @@ def read_xml(terminology, config_file_name):
                     header_ETag = head.headers['ETag']
                     add_config_ETag(config_file_name, collection_name, header_ETag)
 
-
         elif head.headers['Content-Type'] == 'text/xml;charset=UTF-8':
             # read xml response of NERC webpage
             try:
-                req_main = requests.get(url, timeout=10)
+                req_main = requests.get(url, timeout=30)
+                # ses = requests.Session()
+                # ses.mount('http://', HTTPAdapter(max_retries=3))
+                # req_main= ses.get(url)
             except requests.exceptions.ReadTimeout as e:
                 logger.debug(e)
                 return None
@@ -86,6 +70,7 @@ def read_xml(terminology, config_file_name):
     except requests.exceptions.RequestException as e:
         logger.debug(e)  # instead of printing message to the console
         return None
+
     # now try parsing the content of XML file using ET
     try:
         root_main = ET.fromstring(xml_content)
@@ -109,12 +94,12 @@ def xml_parser(root_main, terminologies_left, relation_types):
     for member in members:
         D = dict()
         D['datetime_last_harvest'] = member.find('.' + skos + 'Concept' + dc + 'date').text  # authoredOn
-        D['semantic_uri'] = member.find('.' + skos + 'Concept' + dc + 'identifier').text
+        D['semantic_uri'] = str(member.find('.' + skos + 'Concept' + dc + 'identifier').text)
         D['name'] = member.find('.' + skos + 'Concept' + skos + 'prefLabel').text
         D['description'] = member.find('.' + skos + 'Concept' + skos + 'definition').text
-        D['uri'] = member.find('.' + skos + 'Concept').attrib['{http://www.w3.org/1999/02/22-rdf-syntax-ns#}about']
+        D['uri'] = str(member.find('.' + skos + 'Concept').attrib['{http://www.w3.org/1999/02/22-rdf-syntax-ns#}about'])
         D['deprecated'] = member.find('.' + skos + 'Concept' + owl + 'deprecated').text
-        D['id_term_status'] = int(np.where(D['deprecated'] == 'false', 3, 1))  # important to have int intead of ndarray
+        D['id_term_status'] = int(np.where(D['deprecated'] == 'false', id_term_status_accepted, id_term_status_not_accepted))  # important to have int intead of ndarray
 
         ''' RELATED TERMS'''
         related_total = list()
@@ -135,12 +120,12 @@ def xml_parser(root_main, terminologies_left, relation_types):
                         and any('collection/' + name in related_uri for name in
                                 terminologies_names):  # if related_uri contains one of the collections names (L05,L22,...)
                     related_uri_list.append(related_uri)
-                    id_relation_type_list.append(1)
+                    id_relation_type_list.append(has_broader_term_pk)
                 # if related to the collections previously not read (unique bidirectional relation)
                 elif 'related' in element.tag \
                         and any('collection/' + name in related_uri for name in terminologies_left):
                     related_uri_list.append(related_uri)
-                    id_relation_type_list.append(7)
+                    id_relation_type_list.append(is_related_to_pk)
 
         #  e.g. relation_types[0]={"broader":["P01"],"related":["P01","L05","L22"]}
         elif type(relation_types[0]) == dict:
@@ -157,14 +142,14 @@ def xml_parser(root_main, terminologies_left, relation_types):
                         # e.g. intersection of ["P01","L05","L22"] and ["P01"] is ["P01"]
                         if any('collection/' + name in related_uri for name in names_broader):
                             related_uri_list.append(related_uri)
-                            id_relation_type_list.append(1)
+                            id_relation_type_list.append(has_broader_term_pk)
                     elif 'related' in element.tag:
                         '''choose elements related to the terminology not yet parsed'''
                         names_related = set.intersection(set(r_type_collections), set(terminologies_left))
                         # e.g. intersection of terminologies_left=["P01","L05"] and r_type_collections=["P01"] is []
                         if any('collection/' + name in related_uri for name in names_related):
                             related_uri_list.append(related_uri)
-                            id_relation_type_list.append(7)
+                            id_relation_type_list.append(is_related_to_pk)
         else:
             logger.debug('config file error -- relation_types entered incorrectly')
 
@@ -189,23 +174,16 @@ def read_config_ETag(config_fname, coll_name):
     configParser = configparser.ConfigParser()
     configParser.read(config_fname)
     http_headers = configParser.get('INPUT', 'http_headers_ETag')
-    try:
-        # try parsing as a JSON string
-        http_headers_parsed = json.loads(http_headers)
-    except json.decoder.JSONDecodeError as e:  # e.g. if http_headers_parsed=''
-        http_headers_parsed = None
-    if http_headers_parsed is not None:
-        # if JSON string was parsed properly
-        # try accessing resulting dictionary
+    ETag_from_config= None
+    if http_headers:
         try:
-            ETag_from_config = http_headers_parsed[coll_name]
-        except KeyError:
-            ETag_from_config = None
-    else:
-        ETag_from_config = None
-
+            # try parsing as a JSON string
+            http_headers_parsed = json.loads(http_headers)
+            if http_headers_parsed:
+                ETag_from_config = http_headers_parsed[coll_name]
+        except json.decoder.JSONDecodeError as e:  # e.g. if http_headers_parsed=''
+            logger.debug(e)
     return ETag_from_config
-
 
 def add_config_ETag(config_fname, coll_name, header_ETag):
     """
@@ -236,9 +214,8 @@ def add_config_ETag(config_fname, coll_name, header_ETag):
     with open(config_fname, 'w') as file:
         configParser.write(file)
 
-
-# functions for creation of DB connection   -START    
-def get_config_params(config_file_name):
+## functions for creation of DB connection ##
+def get_config_params():
     """
     Reads config file returns parameters of DB and collections(terminologies) to be imported/updated.
       Input:
@@ -247,7 +224,6 @@ def get_config_params(config_file_name):
                         credentials for the PostgreSQL database
       terminologies: JSON string conatining parameteres of terminologies
       """
-
     configParser = configparser.ConfigParser()
     configParser.read(config_file_name)
     # READING INI FILE
@@ -261,58 +237,55 @@ def get_config_params(config_file_name):
     # terminologies
     terminologies_params = configParser.get('INPUT', 'terminologies')  # parameters for each terminology as JSON str
     terminologies_params_parsed = json.loads(terminologies_params)
-
     return db_params, terminologies_params_parsed
-
-
-# functions for creation of DB connection   -END
-
 
 def main():
     global terminologies_names  # used in xml_parser
 
     terminologies_done = list()
-    # ap = argparse.ArgumentParser()
-    # ap.add_argument("-c", "--config", required=True, help="Path to import.ini config file")
-    # args = ap.parse_args()
-    # config_file_name=args.config  # abs path
-
-    config_file_name = 'E:/PYTHON_work_learn/Python_work/Anu_Project/HARVESTER/JAN_2020/CODE/nerc-importer-master/nerc-importer/config/import.ini'  # abs path
-    db_credentials, terminologies = get_config_params(config_file_name)
     # get db and terminologies parameters from config file
+    db_credentials, terminologies = get_config_params()
 
     # create SQLexecutor object
     sqlExec = sql_nerc.SQLExecutor(db_credentials)
-    sqlExec.setLogger(logger)
+    sqlExec.create_db_connection()
     # create DataframeManipulator object
     DFManipulator = sql_nerc.DframeManipulator(db_credentials)
-    # DFManipulator.setLogger(logger) not currently used there
 
-    terminologies_names = [collection['collection_name'] for collection in terminologies]  # for xml_parser
+    terminologies_names = [collection['collection_name'] for collection in terminologies]  # for xml_parser, ['L05', 'L22', 'P01']
     id_terminologies_SQL = sqlExec.get_id_terminologies()
     df_list = []
     # terminology - dictionary containing terminology name, uri and relation_type
     for terminology in terminologies:
         if int(terminology['id_terminology']) in id_terminologies_SQL:
-
             terminologies_left = [x for x in terminologies_names if x not in terminologies_done]
-            root_main = read_xml(terminology, config_file_name)
+            root_main = read_xml(terminology)
             df = xml_parser(root_main, terminologies_left, terminology['relation_types'])
             # lets assign the id_terminology (e.g. 21 or 22) chosen in .ini file for every terminology
             df = df.assign(id_terminology=terminology['id_terminology'])
+            logger.info('TERMS SIZE: %s %s %s', str(terminology['collection_name']), ' ', str(len(df)))
             df_list.append(df)
             del df  # to free memory
             terminologies_done.append(terminology['collection_name'])
-
         else:
             logger.debug('No corresponding id_terminology in SQL database,'
                          ' terminology {} skipped'.format(terminology['collection_name']))
 
     df_from_nerc = pd.concat(df_list, ignore_index=True)
+    df_from_nerc['id_terminology'] = df_from_nerc['id_terminology'].astype(int) # change from str to int32
+    df_from_nerc['id_term_status'] = df_from_nerc['id_term_status'].astype(int) # change from int64 to int32
+
+    df_from_nerc['name'] = df_from_nerc['name'].astype('str')
+    col_one_list = df_from_nerc['name'].tolist()
+    #print ('LONGEST :', max(col_one_list, key=len))
+    #print(len(df_from_nerc[df_from_nerc['name'].apply(lambda x: len(x) >= 255)]))
+    logger.debug('TOTAL RECORDS %s:', df_from_nerc.shape)
+
     del df_list  # to free memory
     # reading the 'term' table from  pangaea_db database
     used_id_terms = [terminology['id_terminology'] for terminology in terminologies]
     used_id_terms_unique = set(used_id_terms)
+
     sql_command = 'SELECT * FROM public.term \
         WHERE id_terminology in ({})' \
         .format(",".join([str(_) for _ in used_id_terms_unique]))
@@ -322,23 +295,28 @@ def main():
     df_insert, df_update = DFManipulator.dataframe_difference(df_from_nerc, df_from_pangea)
     # df_insert/df_update.shape=(n,7)!
     # df_insert,df_update can be None if df_from_nerc or df_from_pangea are empty
+
     ''' execute INSERT statement if df_insert is not empty'''
-    if df_insert is not None:
-        df_insert_shaped = DFManipulator.df_shaper(df_insert)  # df_ins.shape=(n,17) ready to insert into SQL DB
+    if  df_insert is not None:
+        df_insert_shaped = DFManipulator.df_shaper(df_insert, id_term_category=id_term_category,
+                                                   id_user_created=id_user_created_updated,id_user_updated=id_user_created_updated)  # df_ins.shape=(n,17) ready to insert into SQL DB
         sqlExec.batch_insert_new_terms(table='term', df=df_insert_shaped)
     else:
         logger.debug('Inserting new NERC TERMS : SKIPPED')
 
     ''' execute UPDATE statement if df_update is not empty'''
     if df_update is not None:
-        df_update_shaped = DFManipulator.df_shaper(df_update,
-                                                   df_pang=df_from_pangea)  # add default columns to the table (prepare to be updated to PANGAEA DB)
+        #df_update_shaped = DFManipulator.df_shaper(df_update,df_pang=df_from_pangea)  # add default columns to the table (prepare to be updated to PANGAEA DB)
+        df_update_shaped = DFManipulator.df_shaper(df_update, df_pang=df_from_pangea,id_term_category=id_term_category,
+                                                   id_user_created=id_user_created_updated,
+                                                   id_user_updated=id_user_created_updated)
         columns_to_update = ['name', 'datetime_last_harvest', 'description', 'datetime_updated',
                              'id_term_status', 'uri', 'semantic_uri', 'id_term']
         sqlExec.batch_update_terms(df=df_update_shaped, columns_to_update=columns_to_update,
                                    table='term')
     else:
-        logger.debug('Updating new NERC TERMS : SKIPPED')
+        logger.debug('Updating NERC TERMS : SKIPPED')
+
 
     ''' TERM_RELATION TABLE'''
 
@@ -348,15 +326,18 @@ def main():
     # need the current version of pangaea_db.term table
     # because it could change after insertion and update terms
     df_pangaea_for_relation = sqlExec.dataframe_from_database(sql_command)
-    # df_from_nerc contaions all the entries from all collections that we read from xml
-    # find the related semantic uri from related uri
-    df_related = DFManipulator.get_related_semantic_uri(df_from_nerc)
-    # take corresponding id_terms from SQL pangaea_db.term table(df_pangaea_for_relation)
-    df_related_pk = DFManipulator.get_primary_keys(df_related, df_pangaea_for_relation)
-    # call shaper to get df into proper shape
-    df_related_shaped = DFManipulator.related_df_shaper(df_related_pk)
-    # call batch import 
-    sqlExec.insert_update_relations(table='term_relation', df=df_related_shaped)
+    if df_pangaea_for_relation is not None:
+        # df_from_nerc contaions all the entries from all collections that we read from xml
+        # find the related semantic uri from related uri
+        df_related = DFManipulator.get_related_semantic_uri(df_from_nerc)
+        # take corresponding id_terms from SQL pangaea_db.term table(df_pangaea_for_relation)
+        df_related_pk = DFManipulator.get_primary_keys(df_related, df_pangaea_for_relation)
+        # call shaper to get df into proper shape
+        df_related_shaped = DFManipulator.related_df_shaper(df_related_pk, id_user_created_updated)
+        # call batch import
+        sqlExec.insert_update_relations(table='term_relation', df=df_related_shaped)
+    else:
+        logger.debug('Updating relations aborted as insert/update are not successful')
 
 
 if __name__ == '__main__':
@@ -366,16 +347,32 @@ if __name__ == '__main__':
     rdf = "/{http://www.w3.org/1999/02/22-rdf-syntax-ns#}"
     pav = "/{http://purl.org/pav/}"
     owl = "/{http://www.w3.org/2002/07/owl#}"
-    # parameters of xml files/webpages
-    # url_main='http://vocab.nerc.ac.uk/collection/L05/current/accepted/'
-    # url_test='http://vocab.nerc.ac.uk/collection/L05/current/364/'
-    # filename='main_xml.xml'
 
-    # call logger,start logging
-    logger = initLog()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-c", action="store", help='specify the path of the config file',
+                        dest="config_file", required=True)
+    config = ConfigParser.ConfigParser()
+    global config_file_name
+    global has_broader_term_pk
+    global is_related_to_pk
+    global id_term_status_accepted
+    global id_term_status_not_accepted
+    global id_user_created_updated
+    global id_term_category
+    config_file_name = parser.parse_args().config_file
+    config.read(parser.parse_args().config_file)
+    log_config_file = config['INPUT']['log_config_file']
+    has_broader_term_pk = int(config['INPUT']['has_broader_term_pk'])
+    is_related_to_pk = int(config['INPUT']['is_related_to_pk'])
+    id_term_status_accepted = int(config['INPUT']['id_term_status_accepted'])
+    id_term_status_not_accepted = int(config['INPUT']['id_term_status_not_accepted'])
+    id_user_created_updated = int(config['INPUT']['id_user_created_updated'])
+    id_term_category = int(config['INPUT']['id_term_category'])
+
+    logging.config.fileConfig(log_config_file)
+    logger = logging.getLogger(__name__)
     logger.debug("Starting NERC harvester...")
     a = datetime.datetime.now()
-    # MAIN()
     main()
     b = datetime.datetime.now()
     diff = b - a
