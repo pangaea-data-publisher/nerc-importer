@@ -248,7 +248,6 @@ def main():
 
     # create SQLexecutor object
     sqlExec = sql_nerc.SQLExecutor(db_credentials)
-    sqlExec.create_db_connection()
     # create DataframeManipulator object
     DFManipulator = sql_nerc.DframeManipulator(db_credentials)
 
