@@ -348,9 +348,9 @@ if __name__ == '__main__':
     pav = "/{http://purl.org/pav/}"
     owl = "/{http://www.w3.org/2002/07/owl#}"
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-c", action="store", help='specify the path of the config file',
-                        dest="config_file", required=True)
+    # parser = argparse.ArgumentParser()
+    # parser.add_argument("-c", action="store", help='specify the path of the config file',
+    #                     dest="config_file", required=True)
     config = ConfigParser.ConfigParser()
     global config_file_name
     global has_broader_term_pk
@@ -359,8 +359,9 @@ if __name__ == '__main__':
     global id_term_status_not_accepted
     global id_user_created_updated
     global id_term_category
-    config_file_name = parser.parse_args().config_file
-    config.read(parser.parse_args().config_file)
+    # config_file_name = parser.parse_args().config_file
+    config_file_name ='E:/PYTHON_work_learn/Python_work/Anu_Project/HARVESTER/JAN_2020/CODE/nerc-importer-master/nerc-importer/config/import.ini'
+    config.read(config_file_name)
     log_config_file = config['INPUT']['log_config_file']
     has_broader_term_pk = int(config['INPUT']['has_broader_term_pk'])
     is_related_to_pk = int(config['INPUT']['is_related_to_pk'])
