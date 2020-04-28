@@ -24,3 +24,10 @@ downloads/P01.xml
 .idea/dataSources/1289df6c-5acc-4e13-90d9-6e03d2ac1f1d.xml
 .idea/dataSources/1289df6c-5acc-4e13-90d9-6e03d2ac1f1d/storage_v2/_src_/database/pangaea_db.Ko-1pA/schema/public.abK9xQ.meta
 *.zip
+*.xml
+.idea/dataSources/2229a1f3-e00a-46bc-a884-a39529fd26b9/storage_v2/_src_/database/pangaea_db.Ko-1pA.meta
+.idea/dataSources/2229a1f3-e00a-46bc-a884-a39529fd26b9/storage_v2/_src_/database/pangaea_db.Ko-1pA/schema/information_schema.FNRwLQ.meta
+.idea/dataSources/2229a1f3-e00a-46bc-a884-a39529fd26b9/storage_v2/_src_/database/pangaea_db.Ko-1pA/schema/pg_catalog.0S1ZNQ.meta
+.idea/dataSources/2229a1f3-e00a-46bc-a884-a39529fd26b9/storage_v2/_src_/database/pangaea_db.Ko-1pA/schema/pg_catalog.0S1ZNQ.meta
+.idea/dataSources/2229a1f3-e00a-46bc-a884-a39529fd26b9/storage_v2/_src_/database/pangaea_db.Ko-1pA/schema/public.abK9xQ.meta
+logs/nerc_importer.log

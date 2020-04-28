@@ -83,7 +83,7 @@ def read_xml(terminology):
     return root_main
 
 
-def xml_parser(root_main, terminologies_left, relation_types):
+def xml_parser(root_main, terminologies_left, relation_types,semantic_uri):
     """
     Takes root(ET) of a Collection e.g. 'http://vocab.nerc.ac.uk/collection/L05/current/accepted/'
     Returns pandas DataFrame with harvested fields (e.g.semantic_uri,name,etc.) for every member of the collection
@@ -155,6 +155,8 @@ def xml_parser(root_main, terminologies_left, relation_types):
 
         D['related_uri'] = related_uri_list
         D['id_relation_type'] = id_relation_type_list
+        #assign semantic uri of the collection to use it later in get_related_semantic_uri
+        D['subroot_semantic_uri']=semantic_uri
 
         data.append(D)
     df = pd.DataFrame(data)
@@ -259,7 +261,9 @@ def main():
         if int(terminology['id_terminology']) in id_terminologies_SQL:
             terminologies_left = [x for x in terminologies_names if x not in terminologies_done]
             root_main = read_xml(terminology)
-            df = xml_parser(root_main, terminologies_left, terminology['relation_types'])
+            #
+            semantic_uri = sqlExec.semantic_uri_from_uri(terminology['uri'])
+            df = xml_parser(root_main, terminologies_left, terminology['relation_types'],semantic_uri)
             # lets assign the id_terminology (e.g. 21 or 22) chosen in .ini file for every terminology
             df = df.assign(id_terminology=terminology['id_terminology'])
             logger.info('TERMS SIZE: %s %s %s', str(terminology['collection_name']), ' ', str(len(df)))
@@ -360,7 +364,7 @@ if __name__ == '__main__':
     global id_user_created_updated
     global id_term_category
     # config_file_name = parser.parse_args().config_file
-    config_file_name ='E:/PYTHON_work_learn/Python_work/Anu_Project/HARVESTER/JAN_2020/CODE/nerc-importer-master/nerc-importer/config/import.ini'
+    config_file_name ='E:/WORK/UNI_BREMEN/nerc-importer/config/import.ini'
     config.read(config_file_name)
     log_config_file = config['INPUT']['log_config_file']
     has_broader_term_pk = int(config['INPUT']['has_broader_term_pk'])
