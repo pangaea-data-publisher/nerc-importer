@@ -296,9 +296,8 @@ class DframeManipulator(SQLConnector):
         INPUT - df=df_from_nerc - dataframe read from xml containing related_uri column
         OUTPUT - dataframe containing semantic_uri corresponding to the uri's in the INPUT file
         '''
-        df_subset=df[df.related_uri.apply(lambda x:len(x)!=0)]
         related_s_uri=list()
-        for related_uri_list in df_subset.related_uri:
+        for related_uri_list in df.related_uri:
             templist=list()
             for related_uri in related_uri_list:
                 current_list=df.loc[df.uri==related_uri,'semantic_uri']
@@ -306,11 +305,19 @@ class DframeManipulator(SQLConnector):
                     templist.append(current_list.values[0])
             
             related_s_uri.append(templist)
-        df_subset=df_subset.assign(related_s_uri=related_s_uri)
+        df=df.assign(related_s_uri=related_s_uri)
+        # select orphans - elements without 'broader' relation to any other element
+        orphan=[df.id_relation_type.apply(lambda x:1 not in x)][0]
+        subroot_semantic_uris=list(set(df['subroot_semantic_uri']))
+        if True in set(orphan):    # if there are some orphan elements
+            df.loc[orphan].id_relation_type.apply(lambda x: x.append(1))
+            for subroot_semantic_uri in subroot_semantic_uris:
+                in_subroot=[df['subroot_semantic_uri']==subroot_semantic_uri][0]
+                df.loc[orphan & in_subroot].related_s_uri.apply(lambda x: x.append(subroot_semantic_uri))
         # mask used to exclude the entries where there are no related semantic uris
-        mask=[len(i)!=0 for i in df_subset.related_s_uri]
+        mask=[len(i)!=0 for i in df.related_s_uri]
         
-        return df_subset[['semantic_uri','related_s_uri','id_relation_type']][mask]
+        return df[['semantic_uri','related_s_uri','id_relation_type']][mask]
     
     
     def get_primary_keys(self,df_related,df_pang):

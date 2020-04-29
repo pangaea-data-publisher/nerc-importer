@@ -155,7 +155,7 @@ def xml_parser(root_main, terminologies_left, relation_types,semantic_uri):
 
         D['related_uri'] = related_uri_list
         D['id_relation_type'] = id_relation_type_list
-        #assign semantic uri of the collection to use it later in get_related_semantic_uri
+        # add semantic uri of subroot term in order to use it in get_related_semantic_uri function
         D['subroot_semantic_uri']=semantic_uri
 
         data.append(D)
