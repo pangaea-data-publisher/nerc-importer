@@ -291,7 +291,7 @@ class DframeManipulator(SQLConnector):
         return df_rs
 
     
-    def get_related_semantic_uri(self,df):
+    def get_related_semantic_uri(self,df,has_broader_term_pk):
         '''
         INPUT - df=df_from_nerc - dataframe read from xml containing related_uri column
         OUTPUT - dataframe containing semantic_uri corresponding to the uri's in the INPUT file
@@ -306,14 +306,25 @@ class DframeManipulator(SQLConnector):
             
             related_s_uri.append(templist)
         df=df.assign(related_s_uri=related_s_uri)
+
         # select orphans - elements without 'broader' relation to any other element
         orphan=[df.id_relation_type.apply(lambda x:1 not in x)][0]
         subroot_semantic_uris=list(set(df['subroot_semantic_uri']))
         if True in set(orphan):    # if there are some orphan elements
-            df.loc[orphan].id_relation_type.apply(lambda x: x.append(1))
+            # select an 'orphan' subset of df
+            # then select id_relation_type column
+            # each element of this column is a list(x) of relation types e.g. [7,7,7] or []
+            # append has_broader_term_pk(e.g. 1) to this list    -->    e.g.  [7,7,7,1] or [1]
+            df.loc[orphan].id_relation_type.apply(lambda x: x.append(has_broader_term_pk))
             for subroot_semantic_uri in subroot_semantic_uris:
+                # boolean list corresponding to the entries of particular collection(subroot term)
                 in_subroot=[df['subroot_semantic_uri']==subroot_semantic_uri][0]
+                # select 'orphan' subset belonging to this particular collection
+                # then select related_s_uri column
+                # each element of this column is a list(x)   e.g. ['SDN:L05::367','SDN:L05::364'] or []
+                # append semantic uri of a collection (e.g. SDN:L05) to x --> e.g. ['SDN:L05::367','SDN:L05::364','SDN:L05'] or ['SDN:L05']
                 df.loc[orphan & in_subroot].related_s_uri.apply(lambda x: x.append(subroot_semantic_uri))
+
         # mask used to exclude the entries where there are no related semantic uris
         mask=[len(i)!=0 for i in df.related_s_uri]
         

@@ -261,7 +261,13 @@ def main():
         if int(terminology['id_terminology']) in id_terminologies_SQL:
             terminologies_left = [x for x in terminologies_names if x not in terminologies_done]
             root_main = read_xml(terminology)
-            #
+            # if root_main returned None (not read properly)
+            # skip terminology
+            if not root_main:
+                logger.debug("Collection {} skipped, since not read properly".format(terminology['collection_name']))
+                continue
+            # semantic uri of a collection e.g. L05 - SDN:L05,
+            # semantic uri is used in xml_parser,get_related_semantic_uri
             semantic_uri = sqlExec.semantic_uri_from_uri(terminology['uri'])
             df = xml_parser(root_main, terminologies_left, terminology['relation_types'],semantic_uri)
             # lets assign the id_terminology (e.g. 21 or 22) chosen in .ini file for every terminology
@@ -332,7 +338,7 @@ def main():
     if df_pangaea_for_relation is not None:
         # df_from_nerc contaions all the entries from all collections that we read from xml
         # find the related semantic uri from related uri
-        df_related = DFManipulator.get_related_semantic_uri(df_from_nerc)
+        df_related = DFManipulator.get_related_semantic_uri(df_from_nerc,has_broader_term_pk)
         # take corresponding id_terms from SQL pangaea_db.term table(df_pangaea_for_relation)
         df_related_pk = DFManipulator.get_primary_keys(df_related, df_pangaea_for_relation)
         # call shaper to get df into proper shape
