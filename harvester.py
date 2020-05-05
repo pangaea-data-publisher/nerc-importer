@@ -69,16 +69,18 @@ def read_xml(terminology):
 
     except requests.exceptions.RequestException as e:
         logger.debug(e)  # instead of printing message to the console
+        print('requests exceptions --------------------')
         return None
 
     # now try parsing the content of XML file using ET
-    try:
-        root_main = ET.fromstring(xml_content)
-    except (ET.ParseError, UnboundLocalError) as e:
-        logger.debug(e)
-        return None
-    finally:
-        logger.debug('xml of {} collection is read properly'.format(collection_name))
+    if xml_content:
+        try:
+            root_main = ET.fromstring(xml_content)
+        except (ET.ParseError, UnboundLocalError) as e:
+            logger.debug(e)
+            return None
+        finally:
+            logger.debug('xml of {} collection is read properly'.format(collection_name))
 
     return root_main
 
@@ -263,91 +265,95 @@ def main():
             root_main = read_xml(terminology)
             # if root_main returned None (not read properly)
             # skip terminology
-            if not root_main:
-                logger.debug("Collection {} skipped, since not read properly".format(terminology['collection_name']))
-                continue
-            # semantic uri of a collection e.g. L05 - SDN:L05,
-            # semantic uri is used in xml_parser,get_related_semantic_uri
-            semantic_uri = sqlExec.semantic_uri_from_uri(terminology['uri'])
-            df = xml_parser(root_main, terminologies_left, terminology['relation_types'],semantic_uri)
-            # lets assign the id_terminology (e.g. 21 or 22) chosen in .ini file for every terminology
-            df = df.assign(id_terminology=terminology['id_terminology'])
-            logger.info('TERMS SIZE: %s %s %s', str(terminology['collection_name']), ' ', str(len(df)))
-            df_list.append(df)
-            del df  # to free memory
-            terminologies_done.append(terminology['collection_name'])
+            #if not root_main:
+                #logger.debug("Collection {} skipped, since not read properly".format(terminology['collection_name']))
+                #continue
+            if root_main:
+                # semantic uri of a collection e.g. L05 - SDN:L05,
+                # semantic uri is used in xml_parser,get_related_semantic_uri
+                semantic_uri = sqlExec.semantic_uri_from_uri(terminology['uri'])
+                df = xml_parser(root_main, terminologies_left, terminology['relation_types'],semantic_uri)
+                # lets assign the id_terminology (e.g. 21 or 22) chosen in .ini file for every terminology
+                df = df.assign(id_terminology=terminology['id_terminology'])
+                logger.info('TERMS SIZE: %s %s %s', str(terminology['collection_name']), ' ', str(len(df)))
+                df_list.append(df)
+                del df  # to free memory
+                terminologies_done.append(terminology['collection_name'])
+            else:
+                logger.warning("Collection {} skipped, since not read properly".format(terminology['collection_name']))
         else:
             logger.debug('No corresponding id_terminology in SQL database,'
                          ' terminology {} skipped'.format(terminology['collection_name']))
 
-    df_from_nerc = pd.concat(df_list, ignore_index=True)
-    df_from_nerc['id_terminology'] = df_from_nerc['id_terminology'].astype(int) # change from str to int32
-    df_from_nerc['id_term_status'] = df_from_nerc['id_term_status'].astype(int) # change from int64 to int32
+    if df_list:
+        df_from_nerc = pd.concat(df_list, ignore_index=True)
+        df_from_nerc['id_terminology'] = df_from_nerc['id_terminology'].astype(int) # change from str to int32
+        df_from_nerc['id_term_status'] = df_from_nerc['id_term_status'].astype(int) # change from int64 to int32
 
-    df_from_nerc['name'] = df_from_nerc['name'].astype('str')
-    col_one_list = df_from_nerc['name'].tolist()
-    #print ('LONGEST :', max(col_one_list, key=len))
-    #print(len(df_from_nerc[df_from_nerc['name'].apply(lambda x: len(x) >= 255)]))
-    logger.debug('TOTAL RECORDS %s:', df_from_nerc.shape)
+        df_from_nerc['name'] = df_from_nerc['name'].astype('str')
+        col_one_list = df_from_nerc['name'].tolist()
+        #print ('LONGEST :', max(col_one_list, key=len))
+        #print(len(df_from_nerc[df_from_nerc['name'].apply(lambda x: len(x) >= 255)]))
+        logger.debug('TOTAL RECORDS %s:', df_from_nerc.shape)
 
-    del df_list  # to free memory
-    # reading the 'term' table from  pangaea_db database
-    used_id_terms = [terminology['id_terminology'] for terminology in terminologies]
-    used_id_terms_unique = set(used_id_terms)
+        del df_list  # to free memory
+        # reading the 'term' table from  pangaea_db database
+        used_id_terms = [terminology['id_terminology'] for terminology in terminologies]
+        used_id_terms_unique = set(used_id_terms)
 
-    sql_command = 'SELECT * FROM public.term \
+        sql_command = 'SELECT * FROM public.term \
         WHERE id_terminology in ({})' \
         .format(",".join([str(_) for _ in used_id_terms_unique]))
-    # took care of the fact that there are different id terminologies e.g. 21 or 22
+        # took care of the fact that there are different id terminologies e.g. 21 or 22
 
-    df_from_pangea = sqlExec.dataframe_from_database(sql_command)
-    df_insert, df_update = DFManipulator.dataframe_difference(df_from_nerc, df_from_pangea)
-    # df_insert/df_update.shape=(n,7)!
-    # df_insert,df_update can be None if df_from_nerc or df_from_pangea are empty
+        df_from_pangea = sqlExec.dataframe_from_database(sql_command)
+        df_insert, df_update = DFManipulator.dataframe_difference(df_from_nerc, df_from_pangea)
+        # df_insert/df_update.shape=(n,7)!
+        # df_insert,df_update can be None if df_from_nerc or df_from_pangea are empty
 
-    ''' execute INSERT statement if df_insert is not empty'''
-    if  df_insert is not None:
-        df_insert_shaped = DFManipulator.df_shaper(df_insert, id_term_category=id_term_category,
+        ''' execute INSERT statement if df_insert is not empty'''
+        if  df_insert is not None:
+            df_insert_shaped = DFManipulator.df_shaper(df_insert, id_term_category=id_term_category,
                                                    id_user_created=id_user_created_updated,id_user_updated=id_user_created_updated)  # df_ins.shape=(n,17) ready to insert into SQL DB
-        sqlExec.batch_insert_new_terms(table='term', df=df_insert_shaped)
-    else:
-        logger.debug('Inserting new NERC TERMS : SKIPPED')
+            sqlExec.batch_insert_new_terms(table='term', df=df_insert_shaped)
+        else:
+            logger.debug('Inserting new NERC TERMS : SKIPPED')
 
-    ''' execute UPDATE statement if df_update is not empty'''
-    if df_update is not None:
-        #df_update_shaped = DFManipulator.df_shaper(df_update,df_pang=df_from_pangea)  # add default columns to the table (prepare to be updated to PANGAEA DB)
-        df_update_shaped = DFManipulator.df_shaper(df_update, df_pang=df_from_pangea,id_term_category=id_term_category,
+        ''' execute UPDATE statement if df_update is not empty'''
+        if df_update is not None:
+            #df_update_shaped = DFManipulator.df_shaper(df_update,df_pang=df_from_pangea)  # add default columns to the table (prepare to be updated to PANGAEA DB)
+            df_update_shaped = DFManipulator.df_shaper(df_update, df_pang=df_from_pangea,id_term_category=id_term_category,
                                                    id_user_created=id_user_created_updated,
                                                    id_user_updated=id_user_created_updated)
-        columns_to_update = ['name', 'datetime_last_harvest', 'description', 'datetime_updated',
+            columns_to_update = ['name', 'datetime_last_harvest', 'description', 'datetime_updated',
                              'id_term_status', 'uri', 'semantic_uri', 'id_term']
-        sqlExec.batch_update_terms(df=df_update_shaped, columns_to_update=columns_to_update,
+            sqlExec.batch_update_terms(df=df_update_shaped, columns_to_update=columns_to_update,
                                    table='term')
-    else:
-        logger.debug('Updating NERC TERMS : SKIPPED')
+        else:
+            logger.debug('Updating NERC TERMS : SKIPPED')
 
 
-    ''' TERM_RELATION TABLE'''
+        ''' TERM_RELATION TABLE'''
 
-    sql_command = 'SELECT * FROM public.term \
+        sql_command = 'SELECT * FROM public.term \
             WHERE id_terminology in ({})' \
         .format(",".join([str(_) for _ in used_id_terms_unique]))
-    # need the current version of pangaea_db.term table
-    # because it could change after insertion and update terms
-    df_pangaea_for_relation = sqlExec.dataframe_from_database(sql_command)
-    if df_pangaea_for_relation is not None:
-        # df_from_nerc contaions all the entries from all collections that we read from xml
-        # find the related semantic uri from related uri
-        df_related = DFManipulator.get_related_semantic_uri(df_from_nerc,has_broader_term_pk)
-        # take corresponding id_terms from SQL pangaea_db.term table(df_pangaea_for_relation)
-        df_related_pk = DFManipulator.get_primary_keys(df_related, df_pangaea_for_relation)
-        # call shaper to get df into proper shape
-        df_related_shaped = DFManipulator.related_df_shaper(df_related_pk, id_user_created_updated)
-        logger.debug('TOTAL RELATIONS %s:', df_related_shaped.shape)
-        # call batch import
-        sqlExec.insert_update_relations(table='term_relation', df=df_related_shaped)
-    else:
-        logger.debug('Updating relations aborted as insert/update are not successful')
+        # need the current version of pangaea_db.term table
+        # because it could change after insertion and update terms
+        df_pangaea_for_relation = sqlExec.dataframe_from_database(sql_command)
+        if df_pangaea_for_relation is not None:
+            # df_from_nerc contaions all the entries from all collections that we read from xml
+            # find the related semantic uri from related uri
+            df_related = DFManipulator.get_related_semantic_uri(df_from_nerc,has_broader_term_pk)
+            # take corresponding id_terms from SQL pangaea_db.term table(df_pangaea_for_relation)
+            df_related_pk = DFManipulator.get_primary_keys(df_related, df_pangaea_for_relation)
+            # call shaper to get df into proper shape
+            df_related_shaped = DFManipulator.related_df_shaper(df_related_pk, id_user_created_updated)
+            logger.debug('TOTAL RELATIONS %s:', df_related_shaped.shape)
+            # call batch import
+            sqlExec.insert_update_relations(table='term_relation', df=df_related_shaped)
+        else:
+            logger.debug('Updating relations aborted as insert/update are not successful')
 
 
 if __name__ == '__main__':
@@ -358,9 +364,9 @@ if __name__ == '__main__':
     pav = "/{http://purl.org/pav/}"
     owl = "/{http://www.w3.org/2002/07/owl#}"
 
-    # parser = argparse.ArgumentParser()
-    # parser.add_argument("-c", action="store", help='specify the path of the config file',
-    #                     dest="config_file", required=True)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-c", action="store", help='specify the path of the config file',
+                         dest="config_file", required=True)
     config = ConfigParser.ConfigParser()
     global config_file_name
     global has_broader_term_pk
@@ -369,8 +375,8 @@ if __name__ == '__main__':
     global id_term_status_not_accepted
     global id_user_created_updated
     global id_term_category
-    # config_file_name = parser.parse_args().config_file
-    config_file_name ='E:/WORK/UNI_BREMEN/nerc-importer/config/import.ini'
+    config_file_name = parser.parse_args().config_file
+    #config_file_name ='E:/WORK/UNI_BREMEN/nerc-importer/config/import.ini'
     config.read(config_file_name)
     log_config_file = config['INPUT']['log_config_file']
     has_broader_term_pk = int(config['INPUT']['has_broader_term_pk'])
