@@ -69,7 +69,6 @@ def read_xml(terminology):
 
     except requests.exceptions.RequestException as e:
         logger.debug(e)  # instead of printing message to the console
-        print('requests exceptions --------------------')
         return None
 
     # now try parsing the content of XML file using ET
