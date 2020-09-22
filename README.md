@@ -3,6 +3,5 @@ Python client for importing terms from the BODC NERC terminology server.Collecti
 ## Usage
 ```
 can be executed from command line 
-e.g. (Windows command line)
 python3 harvester.py -c <path_to_config_file>
 ```
