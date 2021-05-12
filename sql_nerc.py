@@ -156,7 +156,7 @@ class SQLExecutor(SQLConnector):
                 #values = "VALUES({})".format(",".join(["%s" for _ in df_columns]))
                 # create INSERT INTO table (columns) VALUES('%s',...)
                 insert_stmt = "INSERT INTO {} AS t ({}) VALUES %s ".format(table, columns)
-                on_conflict = "ON CONFLICT ON CONSTRAINT term_relation_id_term_id_term_related_key " \
+                on_conflict = "ON CONFLICT ON CONSTRAINT term_relation_pkey " \
                               "DO UPDATE SET id_relation_type = EXCLUDED.id_relation_type , " \
                               "datetime_updated = EXCLUDED.datetime_updated , id_user_updated = EXCLUDED.id_user_updated " \
                               "WHERE (t.id_relation_type) IS DISTINCT FROM (EXCLUDED.id_relation_type); "
