@@ -20,10 +20,12 @@ def read_xml(terminology):
     OUT: ET root object
     '''
     url = terminology['uri']
+    uri_postfix = read_config_uriPostfix(config_file_name)
+    url = url + uri_postfix
     collection_name = terminology['collection_name']
     try:
         head = requests.head(url)
-        if head.headers['Content-Type'] == 'application/rdf+xml':
+        if head.headers['Content-Type'] == 'application/rdf+xml; charset=utf-8':
             filename = collection_name + '.xml'
             local_folder = '/downloads/'
             file_abs_path = os.getcwd() + local_folder + filename
@@ -50,8 +52,9 @@ def read_xml(terminology):
                     with open(file_abs_path, 'wb') as f:
                         f.write(req_main.content)
                     # write down the corresponding ETag of a collection into .ini file
-                    header_ETag = head.headers['ETag']
-                    add_config_ETag(config_file_name, collection_name, header_ETag)
+                    #header_ETag = head.headers['ETag']
+                    #add_config_ETag(config_file_name, collection_name, header_ETag)
+                    xml_content = req_main.content
 
         elif head.headers['Content-Type'] == 'text/xml;charset=UTF-8':
             # read xml response of NERC webpage
@@ -166,6 +169,11 @@ def xml_parser(root_main, terminologies_left, relation_types,semantic_uri):
 
     return df
 
+def read_config_uriPostfix(config_fname):
+    configParser = configparser.ConfigParser()
+    configParser.read(config_fname)
+    uri_postfix = configParser.get('INPUT', 'uri_postfix')
+    return uri_postfix
 
 def read_config_ETag(config_fname, coll_name):
     """
