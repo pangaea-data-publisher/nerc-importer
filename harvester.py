@@ -25,7 +25,7 @@ def read_xml(terminology):
     collection_name = terminology['collection_name']
     try:
         head = requests.head(url)
-        if head.headers['Content-Type'] == 'application/rdf+xml; charset=utf-8':
+        if head.headers['Content-Type'].startswith('application/rdf+xml'):
             filename = collection_name + '.xml'
             local_folder = '/downloads/'
             file_abs_path = os.getcwd() + local_folder + filename
@@ -56,7 +56,7 @@ def read_xml(terminology):
                     #add_config_ETag(config_file_name, collection_name, header_ETag)
                     xml_content = req_main.content
 
-        elif head.headers['Content-Type'] == 'text/xml;charset=UTF-8':
+        elif head.headers['Content-Type'].startswith('text/xml'):
             # read xml response of NERC webpage
             try:
                 req_main = requests.get(url, timeout=30)
