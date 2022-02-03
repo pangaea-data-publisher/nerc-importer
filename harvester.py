@@ -95,27 +95,14 @@ def xml_parser(root_main, terminologies_left, relation_types, semantic_uri):
     Returns pandas DataFrame with harvested fields (e.g.semantic_uri,name,etc.) for every member of the collection
     """
     data = []
-    # members = root_main.findall('./' + skos + 'Collection' + skos + 'member')
-    #this returns empty -chaged to:
     members = root_main.findall('./')
 
     for member in members:
-        #D = dict()
-        #D['datetime_last_harvest'] = member.find('.' + skos + 'Concept' + dc + 'date').text  # authoredOn
-        #D['semantic_uri'] = str(member.find('.' + skos + 'Concept' + dc + 'identifier').text)
-        #D['name'] = member.find('.' + skos + 'Concept' + skos + 'prefLabel').text
-        #D['description'] = member.find('.' + skos + 'Concept' + skos + 'definition').text
-        #D['uri'] = str(member.find('.' + skos + 'Concept').attrib['{http://www.w3.org/1999/02/22-rdf-syntax-ns#}about'])
-        #D['deprecated'] = member.find('.' + skos + 'Concept' + owl + 'deprecated').text
-        #D['id_term_status'] = int(np.where(D['deprecated'] == 'false', id_term_status_accepted,
-        #                                   id_term_status_not_accepted))  # important to have int intead of ndarray
-        #code above caused errors, changed to:
         D = dict()
         D['datetime_last_harvest'] = member.find('.' + dc + 'date').text  # authoredOn
         D['semantic_uri'] = str(member.find('.' + dc + 'identifier').text)
         D['name'] = member.find('.' + skos + 'prefLabel').text
         D['description'] = member.find('.' + skos + 'definition').text
-        #D['uri'] = str(member.find('.' + skos + 'Concept').attrib['{http://www.w3.org/1999/02/22-rdf-syntax-ns#}about'])
         D['uri'] = list(member.attrib.values())[0]
         D['deprecated'] = member.find('.' + owl + 'deprecated').text
         D['id_term_status'] = int(np.where(D['deprecated'] == 'false', id_term_status_accepted,
