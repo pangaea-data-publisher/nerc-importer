@@ -11,7 +11,9 @@ import json
 import os
 import sql_nerc
 import configparser as ConfigParser
-#from requests.adapters import HTTPAdapter
+
+
+# from requests.adapters import HTTPAdapter
 
 def read_xml(terminology):
     '''
@@ -33,7 +35,7 @@ def read_xml(terminology):
             while xml_content is None:
                 downloaded_files = os.listdir(os.getcwd() + local_folder)
                 config_ETag = read_config_ETag(config_file_name, collection_name)
-                #print('config_ETag: ',config_ETag) #"44b8821-5a21dd48a4b14;5a21dd496ed93"
+                # print('config_ETag: ',config_ETag) #"44b8821-5a21dd48a4b14;5a21dd496ed93"
                 # config_ETag=None if there is no corresponding ETag entry in .ini file
                 if config_ETag is not None \
                         and filename in downloaded_files \
@@ -52,8 +54,8 @@ def read_xml(terminology):
                     with open(file_abs_path, 'wb') as f:
                         f.write(req_main.content)
                     # write down the corresponding ETag of a collection into .ini file
-                    #header_ETag = head.headers['ETag']
-                    #add_config_ETag(config_file_name, collection_name, header_ETag)
+                    # header_ETag = head.headers['ETag']
+                    # add_config_ETag(config_file_name, collection_name, header_ETag)
                     xml_content = req_main.content
 
         elif head.headers['Content-Type'].startswith('text/xml'):
@@ -87,24 +89,24 @@ def read_xml(terminology):
     return root_main
 
 
-def xml_parser(root_main, terminologies_left, relation_types,semantic_uri):
+def xml_parser(root_main, terminologies_left, relation_types, semantic_uri):
     """
     Takes root(ET) of a Collection e.g. 'http://vocab.nerc.ac.uk/collection/L05/current/accepted/'
     Returns pandas DataFrame with harvested fields (e.g.semantic_uri,name,etc.) for every member of the collection
     """
     data = []
-    members = root_main.findall('./' + skos + 'Collection' + skos + 'member')
+    members = root_main.findall('./')
 
     for member in members:
         D = dict()
-        D['datetime_last_harvest'] = member.find('.' + skos + 'Concept' + dc + 'date').text  # authoredOn
-        D['semantic_uri'] = str(member.find('.' + skos + 'Concept' + dc + 'identifier').text)
-        D['name'] = member.find('.' + skos + 'Concept' + skos + 'prefLabel').text
-        D['description'] = member.find('.' + skos + 'Concept' + skos + 'definition').text
-        D['uri'] = str(member.find('.' + skos + 'Concept').attrib['{http://www.w3.org/1999/02/22-rdf-syntax-ns#}about'])
-        D['deprecated'] = member.find('.' + skos + 'Concept' + owl + 'deprecated').text
-        D['id_term_status'] = int(np.where(D['deprecated'] == 'false', id_term_status_accepted, id_term_status_not_accepted))  # important to have int intead of ndarray
-
+        D['datetime_last_harvest'] = member.find('.' + dc + 'date').text  # authoredOn
+        D['semantic_uri'] = str(member.find('.' + dc + 'identifier').text)
+        D['name'] = member.find('.' + skos + 'prefLabel').text
+        D['description'] = member.find('.' + skos + 'definition').text
+        D['uri'] = list(member.attrib.values())[0]
+        D['deprecated'] = member.find('.' + owl + 'deprecated').text
+        D['id_term_status'] = int(np.where(D['deprecated'] == 'false', id_term_status_accepted,
+                                           id_term_status_not_accepted))  # important to have int intead of ndarray
         ''' RELATED TERMS'''
         related_total = list()
         related_uri_list = list()
@@ -160,7 +162,7 @@ def xml_parser(root_main, terminologies_left, relation_types,semantic_uri):
         D['related_uri'] = related_uri_list
         D['id_relation_type'] = id_relation_type_list
         # add semantic uri of subroot term in order to use it in get_related_semantic_uri function
-        D['subroot_semantic_uri']=semantic_uri
+        D['subroot_semantic_uri'] = semantic_uri
 
         data.append(D)
     df = pd.DataFrame(data)
@@ -169,11 +171,13 @@ def xml_parser(root_main, terminologies_left, relation_types,semantic_uri):
 
     return df
 
+
 def read_config_uriPostfix(config_fname):
     configParser = configparser.ConfigParser()
     configParser.read(config_fname)
     uri_postfix = configParser.get('INPUT', 'uri_postfix')
     return uri_postfix
+
 
 def read_config_ETag(config_fname, coll_name):
     """
@@ -185,7 +189,7 @@ def read_config_ETag(config_fname, coll_name):
     configParser = configparser.ConfigParser()
     configParser.read(config_fname)
     http_headers = configParser.get('INPUT', 'http_headers_ETag')
-    ETag_from_config= None
+    ETag_from_config = None
     if http_headers:
         try:
             # try parsing as a JSON string
@@ -195,6 +199,7 @@ def read_config_ETag(config_fname, coll_name):
         except json.decoder.JSONDecodeError as e:  # e.g. if http_headers_parsed=''
             logger.debug(e)
     return ETag_from_config
+
 
 def add_config_ETag(config_fname, coll_name, header_ETag):
     """
@@ -225,6 +230,7 @@ def add_config_ETag(config_fname, coll_name, header_ETag):
     with open(config_fname, 'w') as file:
         configParser.write(file)
 
+
 ## functions for creation of DB connection ##
 def get_config_params():
     """
@@ -250,6 +256,7 @@ def get_config_params():
     terminologies_params_parsed = json.loads(terminologies_params)
     return db_params, terminologies_params_parsed
 
+
 def main():
     global terminologies_names  # used in xml_parser
 
@@ -262,7 +269,8 @@ def main():
     # create DataframeManipulator object
     DFManipulator = sql_nerc.DframeManipulator(db_credentials)
 
-    terminologies_names = [collection['collection_name'] for collection in terminologies]  # for xml_parser, ['L05', 'L22', 'P01']
+    terminologies_names = [collection['collection_name'] for collection in
+                           terminologies]  # for xml_parser, ['L05', 'L22', 'P01']
     id_terminologies_SQL = sqlExec.get_id_terminologies()
     df_list = []
     # terminology - dictionary containing terminology name, uri and relation_type
@@ -272,14 +280,14 @@ def main():
             root_main = read_xml(terminology)
             # if root_main returned None (not read properly)
             # skip terminology
-            #if not root_main:
-                #logger.debug("Collection {} skipped, since not read properly".format(terminology['collection_name']))
-                #continue
+            # if not root_main:
+            # logger.debug("Collection {} skipped, since not read properly".format(terminology['collection_name']))
+            # continue
             if root_main:
                 # semantic uri of a collection e.g. L05 - SDN:L05,
                 # semantic uri is used in xml_parser,get_related_semantic_uri
                 semantic_uri = sqlExec.semantic_uri_from_uri(terminology['uri'])
-                df = xml_parser(root_main, terminologies_left, terminology['relation_types'],semantic_uri)
+                df = xml_parser(root_main, terminologies_left, terminology['relation_types'], semantic_uri)
                 # lets assign the id_terminology (e.g. 21 or 22) chosen in .ini file for every terminology
                 df = df.assign(id_terminology=terminology['id_terminology'])
                 logger.info('TERMS SIZE: %s %s %s', str(terminology['collection_name']), ' ', str(len(df)))
@@ -294,13 +302,13 @@ def main():
 
     if df_list:
         df_from_nerc = pd.concat(df_list, ignore_index=True)
-        df_from_nerc['id_terminology'] = df_from_nerc['id_terminology'].astype(int) # change from str to int32
-        df_from_nerc['id_term_status'] = df_from_nerc['id_term_status'].astype(int) # change from int64 to int32
+        df_from_nerc['id_terminology'] = df_from_nerc['id_terminology'].astype(int)  # change from str to int32
+        df_from_nerc['id_term_status'] = df_from_nerc['id_term_status'].astype(int)  # change from int64 to int32
 
         df_from_nerc['name'] = df_from_nerc['name'].astype('str')
         col_one_list = df_from_nerc['name'].tolist()
-        #print ('LONGEST :', max(col_one_list, key=len))
-        #print(len(df_from_nerc[df_from_nerc['name'].apply(lambda x: len(x) >= 255)]))
+        # print ('LONGEST :', max(col_one_list, key=len))
+        # print(len(df_from_nerc[df_from_nerc['name'].apply(lambda x: len(x) >= 255)]))
         logger.debug('TOTAL RECORDS %s:', df_from_nerc.shape)
 
         del df_list  # to free memory
@@ -310,7 +318,7 @@ def main():
 
         sql_command = 'SELECT * FROM public.term \
         WHERE id_terminology in ({})' \
-        .format(",".join([str(_) for _ in used_id_terms_unique]))
+            .format(",".join([str(_) for _ in used_id_terms_unique]))
         # took care of the fact that there are different id terminologies e.g. 21 or 22
 
         df_from_pangea = sqlExec.dataframe_from_database(sql_command)
@@ -320,9 +328,9 @@ def main():
 
         ''' execute INSERT statement if df_insert is not empty'''
         if  df_insert is not None:
-            df_insert_shaped = DFManipulator.df_shaper(df_insert, id_term_category=id_term_category,
-                                                   id_user_created=id_user_created_updated,id_user_updated=id_user_created_updated)  # df_ins.shape=(n,17) ready to insert into SQL DB
-            sqlExec.batch_insert_new_terms(table='term', df=df_insert_shaped)
+                df_insert_shaped = DFManipulator.df_shaper(df_insert, id_term_category=id_term_category,
+                                                          id_user_created=id_user_created_updated,id_user_updated=id_user_created_updated)  # df_ins.shape=(n,17) ready to insert into SQL DB
+                sqlExec.batch_insert_new_terms(table='term', df=df_insert_shaped)
         else:
             logger.debug('Inserting new NERC TERMS : SKIPPED')
 
@@ -330,37 +338,37 @@ def main():
         if df_update is not None:
             #df_update_shaped = DFManipulator.df_shaper(df_update,df_pang=df_from_pangea)  # add default columns to the table (prepare to be updated to PANGAEA DB)
             df_update_shaped = DFManipulator.df_shaper(df_update, df_pang=df_from_pangea,id_term_category=id_term_category,
-                                                   id_user_created=id_user_created_updated,
-                                                   id_user_updated=id_user_created_updated)
+                                                         id_user_created=id_user_created_updated,
+                                                         id_user_updated=id_user_created_updated)
             columns_to_update = ['name', 'datetime_last_harvest', 'description', 'datetime_updated',
-                             'id_term_status', 'uri', 'semantic_uri', 'id_term']
+                                   'id_term_status', 'uri', 'semantic_uri', 'id_term']
             sqlExec.batch_update_terms(df=df_update_shaped, columns_to_update=columns_to_update,
-                                   table='term')
+                                         table='term')
         else:
             logger.debug('Updating NERC TERMS : SKIPPED')
 
-
         ''' TERM_RELATION TABLE'''
 
+
         sql_command = 'SELECT * FROM public.term \
-            WHERE id_terminology in ({})' \
+          WHERE id_terminology in ({})' \
         .format(",".join([str(_) for _ in used_id_terms_unique]))
         # need the current version of pangaea_db.term table
         # because it could change after insertion and update terms
         df_pangaea_for_relation = sqlExec.dataframe_from_database(sql_command)
         if df_pangaea_for_relation is not None:
-            # df_from_nerc contaions all the entries from all collections that we read from xml
-            # find the related semantic uri from related uri
-            df_related = DFManipulator.get_related_semantic_uri(df_from_nerc,has_broader_term_pk)
-            # take corresponding id_terms from SQL pangaea_db.term table(df_pangaea_for_relation)
-            df_related_pk = DFManipulator.get_primary_keys(df_related, df_pangaea_for_relation)
-            # call shaper to get df into proper shape
-            df_related_shaped = DFManipulator.related_df_shaper(df_related_pk, id_user_created_updated)
-            logger.debug('TOTAL RELATIONS %s:', df_related_shaped.shape)
-            # call batch import
-            sqlExec.insert_update_relations(table='term_relation', df=df_related_shaped)
+           # df_from_nerc contaions all the entries from all collections that we read from xml
+           # find the related semantic uri from related uri
+           df_related = DFManipulator.get_related_semantic_uri(df_from_nerc,has_broader_term_pk)
+           # take corresponding id_terms from SQL pangaea_db.term table(df_pangaea_for_relation)
+           df_related_pk = DFManipulator.get_primary_keys(df_related, df_pangaea_for_relation)
+           # call shaper to get df into proper shape
+           df_related_shaped = DFManipulator.related_df_shaper(df_related_pk, id_user_created_updated)
+           logger.debug('TOTAL RELATIONS %s:', df_related_shaped.shape)
+           # call batch import
+           sqlExec.insert_update_relations(table='term_relation', df=df_related_shaped)
         else:
-            logger.debug('Updating relations aborted as insert/update are not successful')
+           logger.debug('Updating relations aborted as insert/update are not successful')
 
 
 if __name__ == '__main__':
@@ -373,7 +381,7 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument("-c", action="store", help='specify the path of the config file',
-                         dest="config_file", required=True)
+                        dest="config_file", required=True)
     config = ConfigParser.ConfigParser()
     global config_file_name
     global has_broader_term_pk
@@ -383,7 +391,7 @@ if __name__ == '__main__':
     global id_user_created_updated
     global id_term_category
     config_file_name = parser.parse_args().config_file
-    #config_file_name ='E:/WORK/UNI_BREMEN/nerc-importer/config/import.ini'
+    # config_file_name ='E:/WORK/UNI_BREMEN/nerc-importer/config/import.ini'
     config.read(config_file_name)
     log_config_file = config['INPUT']['log_config_file']
     has_broader_term_pk = int(config['INPUT']['has_broader_term_pk'])
