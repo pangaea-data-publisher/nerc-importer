@@ -98,6 +98,10 @@ def xml_parser(root_main, terminologies_left, relation_types, semantic_uri):
     members = root_main.findall('./')
 
     for member in members:
+        if(list(member.attrib.values())[0]).casefold() == 'http://vocab.nerc.ac.uk/collection/L05/current/'.casefold()\
+                or (list(member.attrib.values())[0]).casefold() == 'http://vocab.nerc.ac.uk/collection/L22/current/'.casefold():
+            continue
+
         D = dict()
         D['datetime_last_harvest'] = member.find('.' + dc + 'date').text  # authoredOn
         D['semantic_uri'] = str(member.find('.' + dc + 'identifier').text)
