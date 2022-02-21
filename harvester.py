@@ -331,25 +331,25 @@ def main():
         # df_insert,df_update can be None if df_from_nerc or df_from_pangea are empty
 
         ''' execute INSERT statement if df_insert is not empty'''
-        if  df_insert is not None:
-                df_insert_shaped = DFManipulator.df_shaper(df_insert, id_term_category=id_term_category,
-                                                          id_user_created=id_user_created_updated,id_user_updated=id_user_created_updated)  # df_ins.shape=(n,17) ready to insert into SQL DB
-                sqlExec.batch_insert_new_terms(table='term', df=df_insert_shaped)
-        else:
-            logger.debug('Inserting new NERC TERMS : SKIPPED')
-
-        ''' execute UPDATE statement if df_update is not empty'''
-        if df_update is not None:
-            #df_update_shaped = DFManipulator.df_shaper(df_update,df_pang=df_from_pangea)  # add default columns to the table (prepare to be updated to PANGAEA DB)
-            df_update_shaped = DFManipulator.df_shaper(df_update, df_pang=df_from_pangea,id_term_category=id_term_category,
-                                                         id_user_created=id_user_created_updated,
-                                                         id_user_updated=id_user_created_updated)
-            columns_to_update = ['name', 'datetime_last_harvest', 'description', 'datetime_updated',
-                                   'id_term_status', 'uri', 'semantic_uri', 'id_term']
-            sqlExec.batch_update_terms(df=df_update_shaped, columns_to_update=columns_to_update,
-                                         table='term')
-        else:
-            logger.debug('Updating NERC TERMS : SKIPPED')
+        # if  df_insert is not None:
+        #         df_insert_shaped = DFManipulator.df_shaper(df_insert, id_term_category=id_term_category,
+        #                                                   id_user_created=id_user_created_updated,id_user_updated=id_user_created_updated)  # df_ins.shape=(n,17) ready to insert into SQL DB
+        #         sqlExec.batch_insert_new_terms(table='term', df=df_insert_shaped)
+        # else:
+        #     logger.debug('Inserting new NERC TERMS : SKIPPED')
+        #
+        # ''' execute UPDATE statement if df_update is not empty'''
+        # if df_update is not None:
+        #     #df_update_shaped = DFManipulator.df_shaper(df_update,df_pang=df_from_pangea)  # add default columns to the table (prepare to be updated to PANGAEA DB)
+        #     df_update_shaped = DFManipulator.df_shaper(df_update, df_pang=df_from_pangea,id_term_category=id_term_category,
+        #                                                  id_user_created=id_user_created_updated,
+        #                                                  id_user_updated=id_user_created_updated)
+        #     columns_to_update = ['name', 'datetime_last_harvest', 'description', 'datetime_updated',
+        #                            'id_term_status', 'uri', 'semantic_uri', 'id_term']
+        #     sqlExec.batch_update_terms(df=df_update_shaped, columns_to_update=columns_to_update,
+        #                                  table='term')
+        # else:
+        #     logger.debug('Updating NERC TERMS : SKIPPED')
 
         ''' TERM_RELATION TABLE'''
 
@@ -370,7 +370,7 @@ def main():
            df_related_shaped = DFManipulator.related_df_shaper(df_related_pk, id_user_created_updated)
            logger.debug('TOTAL RELATIONS %s:', df_related_shaped.shape)
            # call batch import
-           sqlExec.insert_update_relations(table='term_relation', df=df_related_shaped)
+           #sqlExec.insert_update_relations(table='term_relation', df=df_related_shaped)
         else:
            logger.debug('Updating relations aborted as insert/update are not successful')
 
