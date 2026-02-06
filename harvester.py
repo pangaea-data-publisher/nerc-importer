@@ -371,7 +371,7 @@ def main():
            df_related_shaped = DFManipulator.related_df_shaper(df_related_pk, id_user_created_updated)
            logger.debug('TOTAL RELATIONS %s:', df_related_shaped.shape)
            # call batch import
-           #sqlExec.insert_update_relations(table='term_relation', df=df_related_shaped)
+           sqlExec.insert_update_relations(table='term_relation', df=df_related_shaped)
         else:
            logger.debug('Updating relations aborted as insert/update are not successful')
 
