@@ -352,28 +352,26 @@ def main():
     else:
         logger.debug('Updating NERC TERMS : SKIPPED')
 
-        ''' TERM_RELATION TABLE'''
-
-
-        sql_command = 'SELECT * FROM public.term \
-          WHERE id_terminology in ({})' \
-        .format(",".join([str(_) for _ in used_id_terms_unique]))
-        # need the current version of pangaea_db.term table
-        # because it could change after insertion and update terms
-        df_pangaea_for_relation = sqlExec.dataframe_from_database(sql_command)
-        if df_pangaea_for_relation is not None:
-           # df_from_nerc contaions all the entries from all collections that we read from xml
-           # find the related semantic uri from related uri
-           df_related = DFManipulator.get_related_semantic_uri(df_from_nerc,has_broader_term_pk)
-           # take corresponding id_terms from SQL pangaea_db.term table(df_pangaea_for_relation)
-           df_related_pk = DFManipulator.get_primary_keys(df_related, df_pangaea_for_relation)
-           # call shaper to get df into proper shape
-           df_related_shaped = DFManipulator.related_df_shaper(df_related_pk, id_user_created_updated)
-           logger.debug('TOTAL RELATIONS %s:', df_related_shaped.shape)
-           # call batch import
-           sqlExec.insert_update_relations(table='term_relation', df=df_related_shaped)
-        else:
-           logger.debug('Updating relations aborted as insert/update are not successful')
+    ''' TERM_RELATION TABLE'''
+    sql_command = 'SELECT * FROM public.term \
+      WHERE id_terminology in ({})' \
+    .format(",".join([str(_) for _ in used_id_terms_unique]))
+    # need the current version of pangaea_db.term table
+    # because it could change after insertion and update terms
+    df_pangaea_for_relation = sqlExec.dataframe_from_database(sql_command)
+    if df_pangaea_for_relation is not None:
+       # df_from_nerc contaions all the entries from all collections that we read from xml
+       # find the related semantic uri from related uri
+       df_related = DFManipulator.get_related_semantic_uri(df_from_nerc,has_broader_term_pk)
+       # take corresponding id_terms from SQL pangaea_db.term table(df_pangaea_for_relation)
+       df_related_pk = DFManipulator.get_primary_keys(df_related, df_pangaea_for_relation)
+       # call shaper to get df into proper shape
+       df_related_shaped = DFManipulator.related_df_shaper(df_related_pk, id_user_created_updated)
+       logger.debug('TOTAL RELATIONS %s:', df_related_shaped.shape)
+       # call batch import
+       sqlExec.insert_update_relations(table='term_relation', df=df_related_shaped)
+    else:
+       logger.debug('Updating relations aborted as insert/update are not successful')
 
 
 if __name__ == '__main__':
