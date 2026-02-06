@@ -335,7 +335,7 @@ def main():
             df_insert_shaped = DFManipulator.df_shaper(df_insert, id_term_category=id_term_category,
                                                        id_user_created=id_user_created_updated,
                                                        id_user_updated=id_user_created_updated)  # df_ins.shape=(n,17) ready to insert into SQL DB
-        sqlExec.batch_insert_new_terms(table='term', df=df_insert_shaped)
+            sqlExec.batch_insert_new_terms(table='term', df=df_insert_shaped)
     else:
         logger.debug('Inserting new NERC TERMS : SKIPPED')
 
