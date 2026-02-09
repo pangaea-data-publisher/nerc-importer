@@ -120,7 +120,7 @@ def xml_parser(root_main, terminologies_left, relation_types, semantic_uri):
         if type(relation_types[0]) == str:
             # filtering out entries by type of relation
             for r_type in relation_types:
-                r_type_elements = member.findall('.' + skos + 'Concept' + skos + r_type)
+                r_type_elements = member.findall('.' + skos + r_type)
                 if len(r_type_elements) != 0:
                     related_total.extend(r_type_elements)
             # filtering out entries by collection name (from names in .ini)
@@ -140,7 +140,7 @@ def xml_parser(root_main, terminologies_left, relation_types, semantic_uri):
         #  e.g. relation_types[0]={"broader":["P01"],"related":["P01","L05","L22"]}
         elif type(relation_types[0]) == dict:
             for r_type in list(relation_types[0].keys()):
-                r_type_elements = member.findall('.' + skos + 'Concept' + skos + r_type)
+                r_type_elements = member.findall('.' + skos + r_type)
                 r_type_collections = relation_types[0][r_type]  # e.g. ["P01","L05","L22"] for related
                 for element in r_type_elements:
                     related_uri = element.attrib['{http://www.w3.org/1999/02/22-rdf-syntax-ns#}resource']
