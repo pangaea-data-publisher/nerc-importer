@@ -99,7 +99,8 @@ def xml_parser(root_main, terminologies_left, relation_types, semantic_uri):
 
     for member in members:
         if(list(member.attrib.values())[0]).casefold() == 'http://vocab.nerc.ac.uk/collection/L05/current/'.casefold()\
-                or (list(member.attrib.values())[0]).casefold() == 'http://vocab.nerc.ac.uk/collection/L22/current/'.casefold():
+                or (list(member.attrib.values())[0]).casefold() == 'http://vocab.nerc.ac.uk/collection/L22/current/'.casefold()\
+                or (list(member.attrib.values())[0]).casefold() == 'http://vocab.nerc.ac.uk/collection/L06/current/'.casefold():
             continue
 
         D = dict()
